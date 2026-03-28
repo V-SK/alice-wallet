@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Alice Wallet CLI - alice-wallet
+Commands: create, balance, transfer, stake, unstake, status
 """
 import argparse
 import os
@@ -13,7 +14,6 @@ def cmd_create(args):
     from wallet import create_wallet_interactive, DEFAULT_WALLET_PATH
     wallet_path = Path(args.wallet_file) if args.wallet_file != "wallet.json" else DEFAULT_WALLET_PATH
     secrets = create_wallet_interactive(wallet_path=wallet_path)
-    # Secure the wallet file
     if wallet_path.exists():
         os.chmod(wallet_path, 0o600)
     print(f"Address: {secrets.address}")
@@ -50,15 +50,81 @@ def cmd_transfer(args):
         call = si.compose_call(
             "Balances",
             "transfer_allow_death",
-            {
-                "dest": args.to,
-                "value": int(args.amount * 10**12),
-            },
+            {"dest": args.to, "value": int(args.amount * 10**12)},
         )
         extrinsic = si.create_signed_extrinsic(call=call, keypair=keypair)
         receipt = si.submit_extrinsic(extrinsic, wait_for_inclusion=True)
-        print(f"Transfer sent!")
+        print("Transfer sent!")
         print(f"TX: {receipt.extrinsic_hash}")
+    except Exception as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+
+def cmd_stake(args):
+    """Stake ALICE as scorer or aggregator."""
+    try:
+        from wallet import unlock_wallet_interactive, stake_as_scorer, stake_as_aggregator, DEFAULT_WALLET_PATH
+        wallet_path = Path(args.wallet_file) if args.wallet_file != "wallet.json" else DEFAULT_WALLET_PATH
+        secrets = unlock_wallet_interactive(wallet_path=wallet_path)
+        if args.role == "scorer":
+            tx = stake_as_scorer(secrets, args.amount, args.endpoint, rpc_url=args.rpc)
+            print(f"✅ Staked {args.amount:,} ALICE as scorer")
+        elif args.role == "aggregator":
+            tx = stake_as_aggregator(secrets, args.amount, args.endpoint, rpc_url=args.rpc)
+            print(f"✅ Staked {args.amount:,} ALICE as aggregator")
+        print(f"TX: {tx}")
+        print("Stake is Active immediately. You can start your service.")
+    except Exception as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+
+def cmd_unstake(args):
+    """Begin cooldown to unstake from scorer or aggregator role."""
+    try:
+        from wallet import unlock_wallet_interactive, unstake_scorer, unstake_aggregator, DEFAULT_WALLET_PATH
+        wallet_path = Path(args.wallet_file) if args.wallet_file != "wallet.json" else DEFAULT_WALLET_PATH
+        secrets = unlock_wallet_interactive(wallet_path=wallet_path)
+        if args.role == "scorer":
+            tx = unstake_scorer(secrets, rpc_url=args.rpc)
+            print("✅ Unstake cooldown started (scorer)")
+        elif args.role == "aggregator":
+            tx = unstake_aggregator(secrets, rpc_url=args.rpc)
+            print("✅ Unstake cooldown started (aggregator)")
+        print(f"TX: {tx}")
+        print("Note: funds will be released after the cooldown period (~7 days).")
+    except Exception as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+
+def cmd_status(args):
+    """Check on-chain staking status for an address."""
+    try:
+        from wallet import get_stake_status, unlock_wallet_interactive, DEFAULT_WALLET_PATH
+        address = getattr(args, "address", None)
+        if not address:
+            wallet_path = Path(args.wallet_file) if args.wallet_file != "wallet.json" else DEFAULT_WALLET_PATH
+            secrets = unlock_wallet_interactive(wallet_path=wallet_path)
+            address = secrets.address
+        status = get_stake_status(address, rpc_url=args.rpc)
+        print(f"Address   : {address}")
+        print(f"Balance   : {status['balance']:,} ALICE")
+        if status["scorer"]:
+            s = status["scorer"]
+            print(f"Scorer    : {s['stake']:,} ALICE  [{s['status']}]")
+            if s["endpoint"]:
+                print(f"  Endpoint: {s['endpoint']}")
+        else:
+            print("Scorer    : not staked")
+        if status["aggregator"]:
+            a = status["aggregator"]
+            print(f"Aggregator: {a['stake']:,} ALICE  [{a['status']}]")
+            if a["endpoint"]:
+                print(f"  Endpoint: {a['endpoint']}")
+        else:
+            print("Aggregator: not staked")
     except Exception as e:
         print(f"Error: {e}")
         sys.exit(1)
@@ -94,6 +160,20 @@ def main():
     p_tx.add_argument("--to", required=True, help="Recipient address")
     p_tx.add_argument("--amount", type=float, required=True, help="Amount in ALICE")
 
+    # stake
+    p_stake = sub.add_parser("stake", help="Stake ALICE as scorer or aggregator")
+    p_stake.add_argument("role", choices=["scorer", "aggregator"], help="Role to stake for")
+    p_stake.add_argument("amount", type=int, help="Amount of ALICE to stake (whole units)")
+    p_stake.add_argument("--endpoint", required=True, help="Your service URL (e.g. http://1.2.3.4:8090)")
+
+    # unstake
+    p_unstake = sub.add_parser("unstake", help="Begin cooldown to unstake from scorer or aggregator")
+    p_unstake.add_argument("role", choices=["scorer", "aggregator"], help="Role to unstake from")
+
+    # status
+    p_status = sub.add_parser("status", help="Check on-chain staking status")
+    p_status.add_argument("--address", default="", help="Address to check (default: wallet address)")
+
     args = parser.parse_args()
 
     if args.command == "create":
@@ -102,6 +182,12 @@ def main():
         cmd_balance(args)
     elif args.command == "transfer":
         cmd_transfer(args)
+    elif args.command == "stake":
+        cmd_stake(args)
+    elif args.command == "unstake":
+        cmd_unstake(args)
+    elif args.command == "status":
+        cmd_status(args)
     else:
         parser.print_help()
 
