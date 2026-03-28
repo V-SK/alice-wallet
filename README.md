@@ -1,38 +1,68 @@
-# alice-wallet
+# Alice Wallet
 
-Wallet CLI and library for Alice Protocol.
+Command-line wallet for Alice Protocol.
 
-## Installation
+## Install
+
 ```bash
+git clone https://github.com/V-SK/alice-wallet.git
+cd alice-wallet
 pip install -r requirements.txt
 ```
 
-## Usage
+## Quick Start
 
-### Create wallet
 ```bash
+# Create wallet
 python cli.py create
+# ⚠️ Save your mnemonic securely — it cannot be recovered!
+
+# Check balance
+python cli.py balance YOUR_ADDRESS
+
+# Transfer
+python cli.py transfer --to RECIPIENT --amount 100
 ```
 
-### Check balance
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `create` | Create new wallet |
+| `balance <address>` | Check ALICE balance |
+| `transfer --to --amount` | Send ALICE tokens |
+| `stake scorer <amount> --endpoint <url>` | Stake as scorer |
+| `stake aggregator <amount> --endpoint <url>` | Stake as aggregator |
+| `unstake scorer` | Remove scorer stake |
+| `unstake aggregator` | Remove aggregator stake |
+| `status` | View staking status |
+
+## Staking
+
 ```bash
-python cli.py balance <ADDRESS>
+# Stake as scorer (minimum 5,000 ALICE)
+python cli.py stake scorer 5000 --endpoint http://YOUR_IP:8090
+
+# Stake as aggregator (minimum 20,000 ALICE)
+python cli.py stake aggregator 20000 --endpoint http://YOUR_IP:8084
+
+# Check staking status
+python cli.py status
+
+# Unstake
+python cli.py unstake scorer
 ```
 
-### Transfer ALICE
-```bash
-python cli.py transfer --to <ADDRESS> --amount 100
-```
+## Role Requirements
 
-## Roles & Staking
+| Role | Min Stake | Hardware |
+|------|-----------|----------|
+| Training Miner | None | 24GB VRAM GPU |
+| Scorer | 5,000 ALICE | 24GB RAM |
+| Aggregator | 20,000 ALICE | 64GB RAM + 1TB SSD |
 
-| Role | Stake Required |
-|------|---------------|
-| Holder | None |
-| Training Miner | None |
-| Scorer | 5,000 ALICE |
-| Aggregator | 20,000 ALICE |
+## RPC
 
-## Chain Info
-- RPC: wss://rpc.aliceprotocol.org
-- SS58 Format: 300
+Default: `wss://rpc.aliceprotocol.org`
+
+Custom: `python cli.py status --rpc wss://YOUR_NODE:9944`
