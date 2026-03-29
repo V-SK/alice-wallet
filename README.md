@@ -7,6 +7,7 @@ Command-line wallet for Alice Protocol.
 ```bash
 git clone https://github.com/V-SK/alice-wallet.git
 cd alice-wallet
+# Requirements: Python 3.8+
 pip install -r requirements.txt
 ```
 
