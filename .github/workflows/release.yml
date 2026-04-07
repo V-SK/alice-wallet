@@ -1,0 +1,141 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            artifact: AliceWallet-linux-x86_64.tar.gz
+          - name: windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: AliceWallet-windows-x86_64.zip
+          - name: macos-arm64
+            os: macos-14
+            target: aarch64-apple-darwin
+            artifact: AliceWallet-macos-arm64.zip
+          - name: macos-x86_64
+            os: macos-13
+            target: x86_64-apple-darwin
+            artifact: AliceWallet-macos-x86_64.zip
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gui
+
+      - name: Install Linux deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libxcb-render0-dev libxcb-shape0-dev \
+            libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libwayland-dev
+
+      - name: Build
+        working-directory: gui
+        run: cargo build --release --target ${{ matrix.target }}
+
+      # ---------- Linux package ----------
+      - name: Package Linux
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p dist/AliceWallet
+          cp gui/target/${{ matrix.target }}/release/gui dist/AliceWallet/AliceWallet
+          chmod +x dist/AliceWallet/AliceWallet
+          cp gui/alice-logo-traced.svg dist/AliceWallet/
+          cat > dist/AliceWallet/AliceWallet.desktop <<EOF
+          [Desktop Entry]
+          Name=Alice Wallet
+          Exec=AliceWallet
+          Icon=alice-logo-traced
+          Type=Application
+          Categories=Finance;
+          EOF
+          cat > dist/AliceWallet/run.sh <<'EOF'
+          #!/usr/bin/env bash
+          cd "$(dirname "$0")" && ./AliceWallet
+          EOF
+          chmod +x dist/AliceWallet/run.sh
+          tar -czf ${{ matrix.artifact }} -C dist AliceWallet
+
+      # ---------- Windows package ----------
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/AliceWallet | Out-Null
+          Copy-Item gui/target/${{ matrix.target }}/release/gui.exe dist/AliceWallet/AliceWallet.exe
+          Copy-Item gui/alice-logo-traced.svg dist/AliceWallet/
+          Compress-Archive -Path dist/AliceWallet -DestinationPath ${{ matrix.artifact }}
+
+      # ---------- macOS .app ----------
+      - name: Package macOS
+        if: runner.os == 'macOS'
+        run: |
+          APP="dist/AliceWallet.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp gui/target/${{ matrix.target }}/release/gui "$APP/Contents/MacOS/AliceWallet"
+          chmod +x "$APP/Contents/MacOS/AliceWallet"
+          cp gui/alice-logo-traced.svg "$APP/Contents/Resources/"
+          cat > "$APP/Contents/Info.plist" <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key><string>Alice Wallet</string>
+            <key>CFBundleDisplayName</key><string>Alice Wallet</string>
+            <key>CFBundleIdentifier</key><string>org.aliceprotocol.wallet</string>
+            <key>CFBundleVersion</key><string>0.1.0</string>
+            <key>CFBundleShortVersionString</key><string>0.1.0</string>
+            <key>CFBundleExecutable</key><string>AliceWallet</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>LSMinimumSystemVersion</key><string>11.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          EOF
+          codesign --force --deep -s - "$APP" || true
+          ditto -c -k --keepParent "$APP" ${{ matrix.artifact }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true

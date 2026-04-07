@@ -1,5 +1,23 @@
+# Rust
+gui/target/
+**/*.rs.bk
+*.pdb
+
+# Python (existing CLI)
 __pycache__/
 *.pyc
-*.json
-!example_wallet.json
+*.pyo
+.venv/
+venv/
+
+# Wallet runtime data — never commit
+wallet.json
+wallet.json.bak-*
+*.key
+*.pem
 .env
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db
