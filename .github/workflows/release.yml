@@ -23,13 +23,9 @@ jobs:
             target: x86_64-pc-windows-msvc
             artifact: AliceWallet-windows-x86_64.zip
           - name: macos-arm64
-            os: macos-14
+            os: macos-latest
             target: aarch64-apple-darwin
             artifact: AliceWallet-macos-arm64.zip
-          - name: macos-x86_64
-            os: macos-13
-            target: x86_64-apple-darwin
-            artifact: AliceWallet-macos-x86_64.zip
 
     steps:
       - uses: actions/checkout@v4
