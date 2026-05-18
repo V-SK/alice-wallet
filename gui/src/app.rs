@@ -461,10 +461,10 @@ fn spawn_worker(rt: Arc<Runtime>, rx: Receiver<AsyncAction>, tx: Sender<AsyncRes
                         let backed_up = match backup_result {
                             Ok(p) => p,
                             Err(e) => {
-                                let _ = tx.send(AsyncResult::CreateErr(format!(
-                                    "Could not back up existing wallet: {}",
-                                    e
-                                )));
+                                let _ = e;
+                                let _ = tx.send(AsyncResult::CreateErr(
+                                    "Could not prepare the existing wallet safely. Try again before importing.".into(),
+                                ));
                                 phrase.zeroize();
                                 password.zeroize();
                                 return;
@@ -672,8 +672,8 @@ impl AliceWalletApp {
                 self.clear_password_inputs();
                 if let Some(payload) = upgraded_payload {
                     if let Err(e) = crypto::write_wallet_payload(&self.wallet_path, &payload) {
-                        self.sync_error =
-                            Some(format!("Wallet unlocked, but upgrade save failed: {}", e));
+                        let _ = e;
+                        self.sync_error = Some("wallet_local_data_update_retry".to_string());
                     }
                     self.payload = Some(payload);
                 }
@@ -703,10 +703,10 @@ impl AliceWalletApp {
                 self.phase = Phase::Backup;
                 self.auth_error = match save_result {
                     Ok(_) => String::new(),
-                    Err(e) => format!(
-                        "Wallet created, but saving failed: {}. Keep this phrase safe and retry.",
-                        e
-                    ),
+                    Err(e) => {
+                        let _ = e;
+                        "Wallet created, but saving needs retry. Keep this phrase safe.".to_string()
+                    }
                 };
             }
             AsyncResult::ImportOk(payload, secrets, backed_up) => {
@@ -725,15 +725,17 @@ impl AliceWalletApp {
                         self.bump_interaction();
                         self.start_refresh(&secrets.address);
                         if let Some(path) = backed_up {
+                            let _ = path;
                             self.toast = Some(Toast::ok(
-                                "Old wallet backed up",
-                                format!("Previous wallet moved to {}", path.display()),
+                                self.t("toast.backed_up"),
+                                self.t("toast.backed_up_body"),
                             ));
                         }
                     }
                     Err(e) => {
+                        let _ = e;
                         self.phase = Phase::Import;
-                        self.auth_error = format!("Wallet imported, but saving failed: {}", e);
+                        self.auth_error = self.t("auth.import_save_failed").to_string();
                     }
                 }
             }

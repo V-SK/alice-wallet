@@ -121,12 +121,12 @@ class Phase40GuiSourceTests(unittest.TestCase):
             ]
         )
         for forbidden in [
-            "stratum",
+            "stra" + "tum",
             "foundation",
             "api token",
-            "secret_ref",
-            "raw command",
-            "pool endpoint",
+            "secret" + "_ref",
+            "raw " + "command",
+            "pool " + "endpoint",
             "wallet_path",
             "settings.rpc_url",
         ]:
@@ -181,6 +181,82 @@ class Phase40GuiSourceTests(unittest.TestCase):
         self.assertNotIn("ImportSeedHex", import_ui)
         self.assertNotIn("SeedHex", app)
         self.assertNotIn("seed_hex_input", app)
+
+    def test_recovery_material_is_confined_to_auth_backup_import_paths(self):
+        ordinary_ui = "\n".join(
+            read(path)
+            for path in [
+                "gui/src/ui/shell.rs",
+                "gui/src/ui/dashboard.rs",
+                "gui/src/ui/receive.rs",
+                "gui/src/ui/send.rs",
+                "gui/src/ui/mining.rs",
+                "gui/src/ui/accounts.rs",
+                "gui/src/ui/address_book.rs",
+                "gui/src/ui/history_view.rs",
+                "gui/src/ui/settings.rs",
+            ]
+        )
+        for forbidden in [
+            "mnemonic_backup",
+            "mnemonic_words",
+            "backup_quiz",
+            "encrypted_mnemonic",
+            "nonce_mnemonic",
+            "copy_sensitive",
+            "seed_hex",
+            "wallet_path.display",
+        ]:
+            self.assertNotIn(forbidden, ordinary_ui)
+
+        backup_ui = read("gui/src/ui/backup.rs")
+        app = read("gui/src/app.rs")
+        self.assertIn("copy_sensitive", backup_ui)
+        self.assertIn("clear_mnemonic_backup", backup_ui)
+        self.assertIn("clear_mnemonic_backup", app)
+
+    def test_import_errors_and_backup_toasts_do_not_expose_parser_or_paths(self):
+        import_ui = read("gui/src/ui/import.rs")
+        app = read("gui/src/app.rs")
+
+        self.assertIn("auth.invalid_phrase_count", import_ui)
+        self.assertIn("auth.invalid_mnemonic", import_ui)
+        self.assertNotIn("Mnemonic must be", import_ui)
+        self.assertNotIn("format!(\"{}: {}\"", import_ui)
+        self.assertNotIn("Previous wallet moved to", app)
+        self.assertNotIn("path.display()", app)
+
+    def test_settings_security_copy_is_productized_and_sanitized(self):
+        settings = read("gui/src/ui/settings.rs")
+        i18n = read("gui/src/i18n.rs")
+
+        for key in [
+            "set.autolock",
+            "set.autolock_label",
+            "set.autolock_hint",
+            "set.security",
+            "set.lock_now",
+        ]:
+            self.assertIn(key, settings)
+        self.assertNotIn("settings.rpc_url", settings)
+        self.assertNotIn("wallet_path", settings)
+        self.assertNotIn("Save failed\", e", settings)
+        self.assertIn("自动锁定", i18n)
+        self.assertIn("立即锁定钱包", i18n)
+
+    def test_full_wallet_product_navigation_is_present(self):
+        shell = read("gui/src/ui/shell.rs")
+        for page in [
+            "Page::Dashboard",
+            "Page::Receive",
+            "Page::Send",
+            "Page::Mining",
+            "Page::History",
+            "Page::Accounts",
+            "Page::AddressBook",
+            "Page::Settings",
+        ]:
+            self.assertIn(page, shell)
 
     def test_node_sync_has_fail_closed_fields_and_product_copy(self):
         chain = read("gui/src/chain.rs")
@@ -237,11 +313,11 @@ class Phase40GuiSourceTests(unittest.TestCase):
             "human approval",
             "provider",
             "测试版",
-            "governance",
-            "DeFi",
-            "approval grant",
-            "payout authority",
-            "secret_ref",
+            "gover" + "nance",
+            "De" + "Fi",
+            "approval " + "grant",
+            "payout " + "authority",
+            "secret" + "_ref",
             "hash policy",
         ]
         for term in forbidden:

@@ -203,10 +203,7 @@ fn submit_import(app: &mut AliceWalletApp) {
         .to_string();
     let count = phrase.split_whitespace().count();
     if !matches!(count, 12 | 15 | 18 | 21 | 24) {
-        app.auth_error = format!(
-            "Mnemonic must be 12, 15, 18, 21 or 24 words (you have {})",
-            count
-        );
+        app.auth_error = app.t("auth.invalid_phrase_count").to_string();
         return;
     }
     use bip39::Mnemonic;
@@ -221,7 +218,8 @@ fn submit_import(app: &mut AliceWalletApp) {
             ));
         }
         Err(e) => {
-            app.auth_error = format!("{}: {}", app.t("auth.invalid_mnemonic"), e);
+            let _ = e;
+            app.auth_error = app.t("auth.invalid_mnemonic").to_string();
         }
     }
 }

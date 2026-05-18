@@ -23,7 +23,6 @@ fn en(key: &str) -> &'static str {
         "nav.mining" => "Mining",
         "nav.accounts" => "Accounts",
         "nav.address_book" => "Address Book",
-        "nav.stake" => "Rewards",
         "nav.history" => "History",
         "nav.settings" => "Settings",
 
@@ -50,7 +49,6 @@ fn en(key: &str) -> &'static str {
         "dash.receive_btn" => "Receive",
         "dash.send_review_btn" => "Send",
         "dash.history_btn" => "History",
-        "dash.staking" => "Node sync",
         "dash.scorer" => "Scorer",
         "dash.aggregator" => "Aggregator",
         "dash.not_staked" => "Not staked",
@@ -130,23 +128,6 @@ fn en(key: &str) -> &'static str {
         "send.error_recipient_required" => "Enter a recipient address.",
         "send.error_amount_invalid" => "Enter a valid ALICE amount.",
         "send.error_amount_balance" => "Amount exceeds available balance.",
-
-        // Legacy role-action keys retained only for old config compatibility.
-        "stake.title" => "Unavailable",
-        "stake.heading" => "Unavailable",
-        "stake.subtitle" => "This wallet build does not offer old reward-role actions.",
-        "stake.amount" => "AMOUNT (ALICE)",
-        "stake.endpoint" => "CONNECTION",
-        "stake.stake_btn" => "Unavailable",
-        "stake.unstake_btn" => "Unavailable",
-        "stake.endpoint_required" => "Connection is required",
-        "stake.confirm_scorer_stake" => "Unavailable",
-        "stake.confirm_agg_stake" => "Unavailable",
-        "stake.confirm_scorer_unstake" => "Unavailable",
-        "stake.confirm_agg_unstake" => "Unavailable",
-        "stake.endpoint_label" => "Connection",
-        "stake.coming_soon_title" => "Unavailable",
-        "stake.coming_soon_body" => "This wallet build does not offer old reward-role actions.",
 
         // History
         "hist.title" => "History",
@@ -246,6 +227,10 @@ fn en(key: &str) -> &'static str {
         "set.autolock_label" => "INACTIVITY TIMEOUT (MINUTES)",
         "set.save_autolock" => "Save auto-lock",
         "set.autolock_hint" => "0 disables auto-lock. Recommended: 5–15.",
+        "set.autolock_saved" => "Auto-lock updated",
+        "set.save_failed_body" => "Settings could not be saved. Try again.",
+        "set.invalid_value" => "Invalid value",
+        "set.invalid_autolock_body" => "Enter a number from 0 to 1440.",
         "set.connection" => "Node connection",
         "set.connection_body" => "Alice Wallet manages node connection details and shows only sanitized sync status here.",
         "set.wallet_file" => "Wallet data",
@@ -293,7 +278,9 @@ fn en(key: &str) -> &'static str {
         "auth.import_btn" => "Import Wallet",
         "auth.importing" => "Importing…",
         "auth.invalid_seed" => "Seed must be 0x + 64 hex characters (32 bytes)",
-        "auth.invalid_mnemonic" => "Invalid mnemonic",
+        "auth.invalid_mnemonic" => "Recovery phrase is not valid.",
+        "auth.invalid_phrase_count" => "Recovery phrase must contain 12, 15, 18, 21, or 24 words.",
+        "auth.import_save_failed" => "Wallet imported, but saving needs retry.",
         "auth.back" => "← Back",
         "auth.back_options" => "← Wallet options",
         "auth.import_alt" => "Import phrase",
@@ -305,8 +292,13 @@ fn en(key: &str) -> &'static str {
         "backup.title" => "BACK UP YOUR RECOVERY PHRASE",
         "backup.heading" => "Save these 24 words in order",
         "backup.subtitle" => "This is the ONLY way to recover your wallet. Anyone with these words owns the wallet. Write them down offline.",
-        "backup.copy" => "◎ Click to copy full phrase",
+        "backup.copy" => "◎ Click to copy full phrase (clipboard clears automatically)",
+        "backup.copied" => "Copied. Clipboard will clear automatically.",
         "backup.confirm" => "I have saved my recovery phrase",
+        "backup.verify_title" => "Verify your backup",
+        "backup.verify_body" => "Type the words at the positions below to confirm you wrote them down.",
+        "backup.word" => "Word",
+        "backup.save_failed" => "Wallet data could not be saved. Keep your recovery phrase safe and retry.",
 
         // Toasts
         "toast.locked_title" => "Wallet locked",
@@ -324,6 +316,7 @@ fn en(key: &str) -> &'static str {
         "toast.invalid_rpc" => "Invalid RPC URL",
         "toast.invalid_rpc_body" => "URL must start with ws:// or wss://",
         "toast.backed_up" => "Old wallet backed up",
+        "toast.backed_up_body" => "Previous wallet was safely archived on this device.",
         "toast.lock_warn" => "Locking soon",
 
         // Loading
@@ -342,7 +335,6 @@ fn zh(key: &str) -> &'static str {
         "nav.mining" => "挖矿",
         "nav.accounts" => "账户",
         "nav.address_book" => "地址簿",
-        "nav.stake" => "奖励",
         "nav.history" => "历史",
         "nav.settings" => "设置",
 
@@ -369,7 +361,6 @@ fn zh(key: &str) -> &'static str {
         "dash.receive_btn" => "收款",
         "dash.send_review_btn" => "转出",
         "dash.history_btn" => "历史",
-        "dash.staking" => "节点同步",
         "dash.scorer" => "评分者",
         "dash.aggregator" => "聚合者",
         "dash.not_staked" => "未质押",
@@ -449,23 +440,6 @@ fn zh(key: &str) -> &'static str {
         "send.error_recipient_required" => "请输入收款地址。",
         "send.error_amount_invalid" => "请输入有效的 ALICE 金额。",
         "send.error_amount_balance" => "金额超过可用余额。",
-
-        // Legacy role-action keys retained only for old config compatibility.
-        "stake.title" => "不可用",
-        "stake.heading" => "不可用",
-        "stake.subtitle" => "此钱包版本不提供旧奖励角色操作。",
-        "stake.amount" => "金额 (ALICE)",
-        "stake.endpoint" => "连接",
-        "stake.stake_btn" => "不可用",
-        "stake.unstake_btn" => "不可用",
-        "stake.endpoint_required" => "必须填写连接信息",
-        "stake.confirm_scorer_stake" => "不可用",
-        "stake.confirm_agg_stake" => "不可用",
-        "stake.confirm_scorer_unstake" => "不可用",
-        "stake.confirm_agg_unstake" => "不可用",
-        "stake.endpoint_label" => "连接",
-        "stake.coming_soon_title" => "不可用",
-        "stake.coming_soon_body" => "此钱包版本不提供旧奖励角色操作。",
 
         // History
         "hist.title" => "历史",
@@ -567,6 +541,10 @@ fn zh(key: &str) -> &'static str {
         "set.autolock_label" => "无操作锁定时间（分钟）",
         "set.save_autolock" => "保存自动锁定",
         "set.autolock_hint" => "0 表示停用自动锁定，建议值 5–15。",
+        "set.autolock_saved" => "自动锁定已更新",
+        "set.save_failed_body" => "设置暂时无法保存，请重试。",
+        "set.invalid_value" => "数值无效",
+        "set.invalid_autolock_body" => "请输入 0 到 1440 之间的数字。",
         "set.connection" => "节点连接",
         "set.connection_body" => "Alice 钱包会管理节点连接细节，这里只显示经过整理的同步状态。",
         "set.wallet_file" => "钱包数据",
@@ -614,7 +592,9 @@ fn zh(key: &str) -> &'static str {
         "auth.import_btn" => "导入钱包",
         "auth.importing" => "导入中…",
         "auth.invalid_seed" => "私钥必须是 0x + 64 个 hex 字符（32 字节）",
-        "auth.invalid_mnemonic" => "助记词无效",
+        "auth.invalid_mnemonic" => "恢复短语无效。",
+        "auth.invalid_phrase_count" => "恢复短语必须包含 12、15、18、21 或 24 个单词。",
+        "auth.import_save_failed" => "钱包已导入，但保存需要重试。",
         "auth.back" => "← 返回",
         "auth.back_options" => "← 钱包选项",
         "auth.import_alt" => "导入助记词",
@@ -629,7 +609,12 @@ fn zh(key: &str) -> &'static str {
             "这是恢复钱包的唯一方式。任何掌握这些单词的人都能控制本钱包。请离线写下。"
         }
         "backup.copy" => "◎ 点击复制完整助记词",
+        "backup.copied" => "已复制，剪贴板会自动清除。",
         "backup.confirm" => "我已保存助记词",
+        "backup.verify_title" => "确认备份",
+        "backup.verify_body" => "输入下面指定位置的单词，确认你已经离线保存。",
+        "backup.word" => "单词",
+        "backup.save_failed" => "钱包数据暂时无法保存。请保管好恢复短语并重试。",
 
         // Toasts
         "toast.locked_title" => "钱包已锁定",
@@ -647,6 +632,7 @@ fn zh(key: &str) -> &'static str {
         "toast.invalid_rpc" => "RPC URL 无效",
         "toast.invalid_rpc_body" => "URL 必须以 ws:// 或 wss:// 开头",
         "toast.backed_up" => "旧钱包已备份",
+        "toast.backed_up_body" => "之前的钱包已在本设备安全归档。",
         "toast.lock_warn" => "即将锁定",
 
         // Loading

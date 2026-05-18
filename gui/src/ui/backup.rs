@@ -19,7 +19,7 @@ pub fn render(ctx: &egui::Context, app: &mut AliceWalletApp) {
                     );
                     ui.add_space(4.0);
                     ui.label(
-                        RichText::new("BACK UP YOUR RECOVERY PHRASE")
+                        RichText::new(app.t("backup.title"))
                             .size(11.0)
                             .extra_letter_spacing(2.6)
                             .color(THEME.primary),
@@ -31,9 +31,9 @@ pub fn render(ctx: &egui::Context, app: &mut AliceWalletApp) {
                         |ui| {
                             ui.set_max_width(620.0);
                             card_accent(ui, |ui| {
-                                heading(ui, "Save these 24 words in order");
+                                heading(ui, app.t("backup.heading"));
                                 ui.add_space(6.0);
-                                subtle(ui, "This is the ONLY way to recover your wallet. Anyone with these words owns the wallet. Write them down offline.");
+                                subtle(ui, app.t("backup.subtitle"));
                                 ui.add_space(18.0);
 
                                 if !app.auth_error.is_empty() {
@@ -90,9 +90,9 @@ pub fn render(ctx: &egui::Context, app: &mut AliceWalletApp) {
                                         .map(|t| t.elapsed().as_secs() < 2)
                                         .unwrap_or(false)
                                     {
-                                        "Copied — clipboard will clear in 30s"
+                                        app.t("backup.copied")
                                     } else {
-                                        "◎ Click to copy full phrase (auto-clears 30s)"
+                                        app.t("backup.copy")
                                     };
                                     if ui
                                         .add(
@@ -115,8 +115,8 @@ pub fn render(ctx: &egui::Context, app: &mut AliceWalletApp) {
                                 ui.add_space(20.0);
                                 ui.separator();
                                 ui.add_space(14.0);
-                                section_title(ui, "Verify your backup");
-                                subtle(ui, "Type the words at the positions below to confirm you wrote them down.");
+                                section_title(ui, app.t("backup.verify_title"));
+                                subtle(ui, app.t("backup.verify_body"));
                                 ui.add_space(10.0);
 
                                 let expected: Vec<String> = words.clone();
@@ -126,7 +126,11 @@ pub fn render(ctx: &egui::Context, app: &mut AliceWalletApp) {
                                         let idx = app.backup_quiz_indices[slot];
                                         ui.vertical(|ui| {
                                             ui.label(
-                                                RichText::new(format!("Word #{:02}", idx + 1))
+                                                    RichText::new(format!(
+                                                        "{} #{:02}",
+                                                        app.t("backup.word"),
+                                                        idx + 1
+                                                    ))
                                                     .size(10.0)
                                                     .color(THEME.text_dim),
                                             );
@@ -156,7 +160,7 @@ pub fn render(ctx: &egui::Context, app: &mut AliceWalletApp) {
                                 let btn_enabled = all_ok;
                                 if primary_button(
                                     ui,
-                                    "I have saved my recovery phrase",
+                                    app.t("backup.confirm"),
                                     btn_enabled,
                                     true,
                                 )
@@ -175,7 +179,9 @@ pub fn render(ctx: &egui::Context, app: &mut AliceWalletApp) {
                                                 }
                                             }
                                             Err(e) => {
-                                                app.auth_error = format!("Wallet save still failing: {}", e);
+                                                let _ = e;
+                                                app.auth_error =
+                                                    app.t("backup.save_failed").to_string();
                                             }
                                         }
                                     }

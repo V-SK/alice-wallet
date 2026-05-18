@@ -79,38 +79,48 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
     ui.add_space(14.0);
 
     card(ui, |ui| {
-        section_title(ui, "Auto-lock");
-        field_label(ui, "INACTIVITY TIMEOUT (MINUTES)");
+        section_title(ui, app.t("set.autolock"));
+        field_label(ui, app.t("set.autolock_label"));
         text_input(ui, &mut app.settings_lock_draft, "10");
         ui.add_space(8.0);
         ui.label(
-            RichText::new("0 disables auto-lock. Recommended: 5–15.")
+            RichText::new(app.t("set.autolock_hint"))
                 .size(11.0)
                 .color(THEME.text_dim),
         );
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            if primary_button(ui, "Save auto-lock", true, false).clicked() {
+            if primary_button(ui, app.t("set.save_autolock"), true, false).clicked() {
                 match app.settings_lock_draft.trim().parse::<u32>() {
                     Ok(m) if m <= 1440 => {
                         app.settings.auto_lock_minutes = m;
                         match app.settings.save() {
                             Ok(()) => {
-                                app.toast = Some(Toast::ok("Saved", "Auto-lock updated"));
+                                app.toast = Some(Toast::ok(
+                                    app.t("toast.saved"),
+                                    app.t("set.autolock_saved"),
+                                ));
                                 app.bump_interaction();
                             }
                             Err(e) => {
-                                app.toast = Some(Toast::err("Save failed", e));
+                                let _ = e;
+                                app.toast = Some(Toast::err(
+                                    app.t("toast.save_failed"),
+                                    app.t("set.save_failed_body"),
+                                ));
                             }
                         }
                     }
                     _ => {
-                        app.toast = Some(Toast::err("Invalid value", "Enter an integer 0-1440"));
+                        app.toast = Some(Toast::err(
+                            app.t("set.invalid_value"),
+                            app.t("set.invalid_autolock_body"),
+                        ));
                     }
                 }
             }
             ui.add_space(10.0);
-            if secondary_button(ui, "Reset to default", true, false).clicked() {
+            if secondary_button(ui, app.t("set.reset_default"), true, false).clicked() {
                 app.settings_lock_draft = DEFAULT_AUTO_LOCK_MINUTES.to_string();
             }
         });
@@ -141,9 +151,9 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
     ui.add_space(14.0);
 
     card(ui, |ui| {
-        section_title(ui, "Security");
+        section_title(ui, app.t("set.security"));
         ui.add_space(4.0);
-        if danger_button(ui, "Lock wallet now", true).clicked() {
+        if danger_button(ui, app.t("set.lock_now"), true).clicked() {
             app.lock_now();
         }
     });
