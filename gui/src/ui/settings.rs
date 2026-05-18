@@ -49,7 +49,7 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
                     .clicked()
                 {
                     app.settings.lang = lang;
-                    let _ = app.settings.save();
+                    let _ = app.save_settings();
                 }
                 ui.add_space(8.0);
             }
@@ -94,7 +94,7 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
                 match app.settings_lock_draft.trim().parse::<u32>() {
                     Ok(m) if m <= 1440 => {
                         app.settings.auto_lock_minutes = m;
-                        match app.settings.save() {
+                        match app.save_settings() {
                             Ok(()) => {
                                 app.toast = Some(Toast::ok(
                                     app.t("toast.saved"),

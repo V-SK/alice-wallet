@@ -215,6 +215,17 @@ class Phase40GuiSourceTests(unittest.TestCase):
         self.assertIn("clear_mnemonic_backup", backup_ui)
         self.assertIn("clear_mnemonic_backup", app)
 
+    def test_qa_backup_route_does_not_render_placeholder_recovery_words(self):
+        app = read("gui/src/app.rs")
+        backup_ui = read("gui/src/ui/backup.rs")
+        i18n = read("gui/src/i18n.rs")
+
+        self.assertIn("qa_redacted_preview", backup_ui)
+        self.assertIn("app.qa_mock_mode && app.mnemonic_backup.is_empty()", backup_ui)
+        self.assertIn("NO RECOVERY PHRASE LOADED", backup_ui)
+        self.assertIn("Recovery phrase is not loaded in QA", i18n)
+        self.assertNotIn("qa-redacted-", app)
+
     def test_import_errors_and_backup_toasts_do_not_expose_parser_or_paths(self):
         import_ui = read("gui/src/ui/import.rs")
         app = read("gui/src/app.rs")
@@ -322,6 +333,17 @@ class Phase40GuiSourceTests(unittest.TestCase):
         ]
         for term in forbidden:
             self.assertNotIn(term, checked)
+
+    def test_macos_app_icon_bundle_resources_are_configured(self):
+        main = read("gui/src/main.rs")
+        bundle_script = read("gui/scripts/build_qa_app_bundle.sh")
+        icon_script = read("gui/scripts/build_macos_icon.sh")
+
+        self.assertIn("with_icon(icon)", main)
+        self.assertIn("CFBundleIconFile", bundle_script)
+        self.assertIn("AliceWallet.icns", bundle_script)
+        self.assertIn("iconutil -c icns", icon_script)
+        self.assertTrue((ROOT / "gui/assets/macos/AliceWallet.icns").exists())
 
 
 if __name__ == "__main__":

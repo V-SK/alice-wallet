@@ -37,6 +37,21 @@ cargo run
 
 Release packaging is intentionally outside this Phase40 branch scope.
 
+For local QA smoke only, the GUI supports a display-only mock mode that avoids
+loading local wallet files, saved settings, RPC refreshes, transfer execution,
+and mining execution:
+
+```bash
+cd gui
+TMPDIR=/tmp CARGO_TARGET_DIR="/Volumes/Z Slim/AliceWork/cargo-target" cargo build
+./scripts/build_macos_icon.sh
+./scripts/build_qa_app_bundle.sh "/Volumes/Z Slim/AliceWork/phase40r/AliceWalletQA.app"
+ALICE_WALLET_QA_MOCK=1 "/Volumes/Z Slim/AliceWork/phase40r/AliceWalletQA.app/Contents/MacOS/AliceWalletQA"
+```
+
+The QA bundle includes `assets/macos/AliceWallet.icns` for the macOS app icon.
+It is not a signed, notarized, or release-ready package.
+
 ## Quick Start
 
 ```bash

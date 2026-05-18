@@ -73,10 +73,7 @@ pub fn install_fonts(ctx: &egui::Context) {
         ))),
     );
 
-    let prop = fonts
-        .families
-        .entry(FontFamily::Proportional)
-        .or_default();
+    let prop = fonts.families.entry(FontFamily::Proportional).or_default();
     prop.insert(0, "Inter".into());
     prop.insert(1, "Inter-Bold".into());
     prop.insert(2, "NotoSC".into());

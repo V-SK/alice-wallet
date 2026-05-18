@@ -36,6 +36,11 @@ pub fn render(ctx: &egui::Context, app: &mut AliceWalletApp) {
                                 subtle(ui, app.t("backup.subtitle"));
                                 ui.add_space(18.0);
 
+                                if app.qa_mock_mode && app.mnemonic_backup.is_empty() {
+                                    qa_redacted_preview(ui, app);
+                                    return;
+                                }
+
                                 if !app.auth_error.is_empty() {
                                     error_banner(ui, &app.auth_error);
                                     ui.add_space(14.0);
@@ -190,6 +195,37 @@ pub fn render(ctx: &egui::Context, app: &mut AliceWalletApp) {
                         },
                     );
                 });
+            });
+        });
+}
+
+fn qa_redacted_preview(ui: &mut egui::Ui, app: &AliceWalletApp) {
+    egui::Frame::NONE
+        .fill(THEME.bg_panel_hi)
+        .corner_radius(12)
+        .inner_margin(egui::Margin::same(16))
+        .stroke(egui::Stroke::new(1.0, THEME.border_accent))
+        .show(ui, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.label(
+                    RichText::new(app.t("backup.qa_redacted_title"))
+                        .size(18.0)
+                        .strong()
+                        .color(THEME.text_hi),
+                );
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new(app.t("backup.qa_redacted_body"))
+                        .size(12.5)
+                        .color(THEME.text_mid),
+                );
+                ui.add_space(14.0);
+                ui.label(
+                    RichText::new("NO RECOVERY PHRASE LOADED")
+                        .size(12.0)
+                        .family(egui::FontFamily::Monospace)
+                        .color(THEME.primary),
+                );
             });
         });
 }

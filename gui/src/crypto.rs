@@ -72,12 +72,22 @@ impl Drop for SecretSeed {
 #[derive(Clone)]
 pub struct WalletSecrets {
     pub address: String,
-    seed: Arc<SecretSeed>,
+    seed: Option<Arc<SecretSeed>>,
 }
 
 impl WalletSecrets {
+    pub fn display_only(address: impl Into<String>) -> Self {
+        Self {
+            address: address.into(),
+            seed: None,
+        }
+    }
+
     pub fn to_keypair(&self) -> Result<Sr25519Keypair, String> {
-        Sr25519Keypair::from_secret_key(*self.seed.expose()).map_err(|e| e.to_string())
+        let Some(seed) = self.seed.as_ref() else {
+            return Err("Signing is unavailable in display-only wallet preview.".into());
+        };
+        Sr25519Keypair::from_secret_key(*seed.expose()).map_err(|e| e.to_string())
     }
 }
 
@@ -191,10 +201,14 @@ pub fn unlock_wallet(payload: &WalletPayload, password: &str) -> Result<UnlockOu
     Ok(UnlockOutcome {
         secrets: WalletSecrets {
             address: payload.address.clone(),
-            seed: Arc::new(seed),
+            seed: Some(Arc::new(seed)),
         },
         upgraded_payload,
     })
+}
+
+pub fn qa_display_address() -> String {
+    account_id_to_ss58(&[0x42u8; 32], SS58_FORMAT)
 }
 
 pub fn create_wallet_payload(mnemonic: &str, password: &str) -> Result<WalletPayload, String> {
@@ -209,12 +223,15 @@ pub fn create_wallet_payload_from_seed_hex(
     seed_hex: &str,
     password: &str,
 ) -> Result<WalletPayload, String> {
-    let trimmed = seed_hex.trim().trim_start_matches("0x").trim_start_matches("0X");
+    let trimmed = seed_hex
+        .trim()
+        .trim_start_matches("0x")
+        .trim_start_matches("0X");
     if trimmed.len() != 64 {
         return Err("Seed must be 0x + 64 hex characters (32 bytes)".into());
     }
-    let mut bytes_vec = hex::decode(trimmed)
-        .map_err(|_| "Seed contains invalid hex characters".to_string())?;
+    let mut bytes_vec =
+        hex::decode(trimmed).map_err(|_| "Seed contains invalid hex characters".to_string())?;
     if bytes_vec.len() != 32 {
         bytes_vec.zeroize();
         return Err("Decoded seed length is not 32 bytes".into());

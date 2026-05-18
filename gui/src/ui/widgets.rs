@@ -73,12 +73,7 @@ pub fn text_input(ui: &mut Ui, value: &mut String, hint: &str) -> Response {
     )
 }
 
-pub fn password_input(
-    ui: &mut Ui,
-    value: &mut String,
-    visible: &mut bool,
-    hint: &str,
-) -> Response {
+pub fn password_input(ui: &mut Ui, value: &mut String, visible: &mut bool, hint: &str) -> Response {
     ui.horizontal(|ui| {
         let resp = ui.add(
             egui::TextEdit::singleline(value)
@@ -124,14 +119,10 @@ pub fn primary_button(ui: &mut Ui, label: &str, enabled: bool, full: bool) -> Re
 }
 
 pub fn secondary_button(ui: &mut Ui, label: &str, enabled: bool, full: bool) -> Response {
-    let mut btn = egui::Button::new(
-        RichText::new(label)
-            .size(14.0)
-            .color(THEME.text_hi),
-    )
-    .fill(THEME.bg_panel_hi)
-    .stroke(Stroke::new(1.0, THEME.border_accent))
-    .corner_radius(10);
+    let mut btn = egui::Button::new(RichText::new(label).size(14.0).color(THEME.text_hi))
+        .fill(THEME.bg_panel_hi)
+        .stroke(Stroke::new(1.0, THEME.border_accent))
+        .corner_radius(10);
     if full {
         btn = btn.min_size(egui::vec2(ui.available_width(), 44.0));
     } else {
@@ -184,7 +175,14 @@ pub fn shortened_address(addr: &str) -> String {
         return addr.to_string();
     }
     let head: String = addr.chars().take(6).collect();
-    let tail: String = addr.chars().rev().take(6).collect::<String>().chars().rev().collect();
+    let tail: String = addr
+        .chars()
+        .rev()
+        .take(6)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
     format!("{}…{}", head, tail)
 }
 
@@ -205,12 +203,20 @@ pub fn copy_label(
         *copied_at = None;
     }
 
-    let text = if is_copied { "Copied to clipboard" } else { display };
+    let text = if is_copied {
+        "Copied to clipboard"
+    } else {
+        display
+    };
     let mut rt = RichText::new(text).size(12.5);
     if monospace && !is_copied {
         rt = rt.family(egui::FontFamily::Monospace);
     }
-    rt = rt.color(if is_copied { THEME.primary_hi } else { THEME.text_hi });
+    rt = rt.color(if is_copied {
+        THEME.primary_hi
+    } else {
+        THEME.text_hi
+    });
 
     let resp = ui.add(egui::Label::new(rt).sense(egui::Sense::click()));
     if resp.clicked() {
@@ -265,13 +271,9 @@ pub fn strength_bar(ui: &mut Ui, pwd: &str) {
     ui.horizontal(|ui| {
         for i in 0..4 {
             let filled = i < score;
-            let (rect, _) =
-                ui.allocate_exact_size(egui::vec2(54.0, 5.0), egui::Sense::hover());
-            ui.painter().rect_filled(
-                rect,
-                3,
-                if filled { color } else { THEME.border },
-            );
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(54.0, 5.0), egui::Sense::hover());
+            ui.painter()
+                .rect_filled(rect, 3, if filled { color } else { THEME.border });
         }
         ui.add_space(6.0);
         ui.label(RichText::new(label).size(11.0).color(color));

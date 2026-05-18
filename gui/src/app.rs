@@ -110,6 +110,7 @@ pub enum AsyncResult {
 
 pub struct AliceWalletApp {
     pub rt: Arc<Runtime>,
+    pub qa_mock_mode: bool,
 
     pub phase: Phase,
     pub page: Page,
@@ -174,8 +175,19 @@ pub struct AliceWalletApp {
 
 impl AliceWalletApp {
     pub fn new(rt: Runtime) -> Self {
-        let default_wallet_path = crypto::default_wallet_path();
-        let settings = Settings::load();
+        let qa_mock_mode = std::env::var("ALICE_WALLET_QA_MOCK")
+            .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+            .unwrap_or(false);
+        let default_wallet_path = if qa_mock_mode {
+            std::path::PathBuf::from("qa-display-only-no-wallet-file")
+        } else {
+            crypto::default_wallet_path()
+        };
+        let settings = if qa_mock_mode {
+            Settings::default()
+        } else {
+            Settings::load()
+        };
         let (gui_tx, worker_rx) = channel::<AsyncAction>();
         let (worker_tx, gui_rx) = channel::<AsyncResult>();
 
@@ -184,6 +196,7 @@ impl AliceWalletApp {
 
         let mut app = Self {
             rt,
+            qa_mock_mode,
             phase: Phase::CheckWallet,
             page: Page::Dashboard,
             default_wallet_path: default_wallet_path.clone(),
@@ -231,8 +244,68 @@ impl AliceWalletApp {
             rx: gui_rx,
         };
 
-        app.check_wallet();
+        if app.qa_mock_mode {
+            app.enable_qa_mock_mode();
+        } else {
+            app.check_wallet();
+        }
         app
+    }
+
+    fn enable_qa_mock_mode(&mut self) {
+        self.phase = Phase::Main;
+        self.page = qa_page_from_env();
+        self.payload = None;
+        self.detected_wallet_path = None;
+        self.secrets = Some(crypto::WalletSecrets::display_only(
+            crypto::qa_display_address(),
+        ));
+        self.settings.rpc_url = "wss://alice-wallet-qa.invalid".into();
+        self.balance = Some(0);
+        self.block_height = None;
+        self.node_sync = NodeSyncSnapshot::unavailable("qa_mock_local_fixture_only");
+        self.connection_status = ConnectionState::Error;
+        self.sync_error = Some("Mock QA mode uses local fixture data only.".to_string());
+        self.refresh_pending = 0;
+
+        match std::env::var("ALICE_WALLET_QA_PHASE")
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "create" => {
+                self.secrets = None;
+                self.phase = Phase::Create;
+            }
+            "import" | "recovery" => {
+                self.secrets = None;
+                self.phase = Phase::Import;
+            }
+            "unlock" | "lock" => {
+                self.secrets = None;
+                self.phase = Phase::Unlock;
+            }
+            "backup" => {
+                self.phase = Phase::Backup;
+                self.mnemonic_backup.clear();
+            }
+            _ => {}
+        }
+
+        if matches!(
+            std::env::var("ALICE_WALLET_QA_PAGE")
+                .unwrap_or_default()
+                .to_ascii_lowercase()
+                .as_str(),
+            "send-review" | "send_review"
+        ) {
+            self.page = Page::Send;
+            self.send_recipient = crypto::qa_display_address();
+            self.send_amount = "0".to_string();
+            self.send_note = "Local review preview only".to_string();
+            self.send_review_ready = true;
+            self.send_review_error = None;
+        }
     }
 
     fn check_wallet(&mut self) {
@@ -321,7 +394,23 @@ impl AliceWalletApp {
         self.last_interaction = Instant::now();
     }
 
+    pub fn save_settings(&self) -> Result<(), String> {
+        if self.qa_mock_mode {
+            return Ok(());
+        }
+        self.settings.save()
+    }
+
     pub fn start_refresh(&mut self, address: &str) {
+        if self.qa_mock_mode {
+            let _ = address;
+            self.balance = Some(0);
+            self.node_sync = NodeSyncSnapshot::unavailable("qa_mock_local_fixture_only");
+            self.connection_status = ConnectionState::Error;
+            self.sync_error = Some("Mock QA mode uses local fixture data only.".to_string());
+            self.refresh_pending = 0;
+            return;
+        }
         self.refresh_pending += 1;
         self.sync_error = None;
         let _ = self.tx.send(AsyncAction::RefreshAll(
@@ -404,6 +493,88 @@ impl AliceWalletApp {
     pub fn reset_send_review(&mut self) {
         self.send_review_ready = false;
         self.send_review_error = None;
+    }
+}
+
+fn qa_page_from_env() -> Page {
+    match std::env::var("ALICE_WALLET_QA_PAGE")
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "receive" => Page::Receive,
+        "send" | "send-review" | "send_review" => Page::Send,
+        "mining" => Page::Mining,
+        "history" => Page::History,
+        "accounts" => Page::Accounts,
+        "address-book" | "address_book" => Page::AddressBook,
+        "settings" => Page::Settings,
+        _ => Page::Dashboard,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn qa_mock_mode_uses_display_only_wallet_and_skips_network_refresh() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        std::env::set_var("ALICE_WALLET_QA_MOCK", "1");
+        let rt = Runtime::new().expect("runtime");
+        let mut app = AliceWalletApp::new(rt);
+        std::env::remove_var("ALICE_WALLET_QA_MOCK");
+
+        assert!(app.qa_mock_mode);
+        assert_eq!(app.phase, Phase::Main);
+        assert!(app.payload.is_none());
+        assert!(app.secrets.is_some());
+        assert_eq!(app.balance, Some(0));
+
+        app.start_refresh("ignored-in-qa-mode");
+        assert_eq!(app.refresh_pending, 0);
+        assert!(matches!(app.connection_status, ConnectionState::Error));
+        assert!(app
+            .sync_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("local fixture"));
+    }
+
+    #[test]
+    fn qa_mock_mode_can_open_pages_and_auth_flows_without_wallet_data() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        std::env::set_var("ALICE_WALLET_QA_MOCK", "1");
+        std::env::set_var("ALICE_WALLET_QA_PAGE", "mining");
+        let rt = Runtime::new().expect("runtime");
+        let app = AliceWalletApp::new(rt);
+        assert_eq!(app.phase, Phase::Main);
+        assert_eq!(app.page, Page::Mining);
+        assert!(app.payload.is_none());
+
+        std::env::set_var("ALICE_WALLET_QA_PHASE", "import");
+        std::env::remove_var("ALICE_WALLET_QA_PAGE");
+        let rt = Runtime::new().expect("runtime");
+        let app = AliceWalletApp::new(rt);
+        assert_eq!(app.phase, Phase::Import);
+        assert!(app.payload.is_none());
+        assert!(app.secrets.is_none());
+
+        std::env::set_var("ALICE_WALLET_QA_PHASE", "");
+        std::env::set_var("ALICE_WALLET_QA_PAGE", "send-review");
+        let rt = Runtime::new().expect("runtime");
+        let app = AliceWalletApp::new(rt);
+        assert_eq!(app.phase, Phase::Main);
+        assert_eq!(app.page, Page::Send);
+        assert!(app.send_review_ready);
+        assert_eq!(app.send_amount, "0");
+
+        std::env::remove_var("ALICE_WALLET_QA_MOCK");
+        std::env::remove_var("ALICE_WALLET_QA_PAGE");
+        std::env::remove_var("ALICE_WALLET_QA_PHASE");
     }
 }
 
@@ -588,7 +759,11 @@ impl eframe::App for AliceWalletApp {
         }
 
         // Auto-refresh balance + stake every 30s on Main phase
-        if self.phase == Phase::Main && self.secrets.is_some() && self.refresh_pending == 0 {
+        if self.phase == Phase::Main
+            && !self.qa_mock_mode
+            && self.secrets.is_some()
+            && self.refresh_pending == 0
+        {
             let needs = self
                 .last_data_poll
                 .map(|t| t.elapsed() > Duration::from_secs(30))
@@ -607,7 +782,7 @@ impl eframe::App for AliceWalletApp {
         }
 
         // Background block poll when on main phase
-        if self.phase == Phase::Main {
+        if self.phase == Phase::Main && !self.qa_mock_mode {
             let needs_poll = self
                 .last_block_poll
                 .map(|t| t.elapsed() > Duration::from_secs(8))

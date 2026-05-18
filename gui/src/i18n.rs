@@ -299,6 +299,8 @@ fn en(key: &str) -> &'static str {
         "backup.verify_body" => "Type the words at the positions below to confirm you wrote them down.",
         "backup.word" => "Word",
         "backup.save_failed" => "Wallet data could not be saved. Keep your recovery phrase safe and retry.",
+        "backup.qa_redacted_title" => "Recovery phrase is not loaded in QA",
+        "backup.qa_redacted_body" => "This mock route verifies the layout only. It does not load, generate, copy, or display any recovery words.",
 
         // Toasts
         "toast.locked_title" => "Wallet locked",
@@ -615,6 +617,10 @@ fn zh(key: &str) -> &'static str {
         "backup.verify_body" => "输入下面指定位置的单词，确认你已经离线保存。",
         "backup.word" => "单词",
         "backup.save_failed" => "钱包数据暂时无法保存。请保管好恢复短语并重试。",
+        "backup.qa_redacted_title" => "QA 模式未加载助记词",
+        "backup.qa_redacted_body" => {
+            "这个本地 mock 页面只验证布局，不加载、生成、复制或显示任何恢复词。"
+        }
 
         // Toasts
         "toast.locked_title" => "钱包已锁定",

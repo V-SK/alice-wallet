@@ -128,7 +128,7 @@ pub fn render(ctx: &egui::Context, app: &mut AliceWalletApp) {
                             Lang::En => Lang::Zh,
                             Lang::Zh => Lang::En,
                         };
-                        let _ = app.settings.save();
+                        let _ = app.save_settings();
                     }
                     ui.add_space(8.0);
                     if let Some(until) = app.auto_lock_remaining() {
