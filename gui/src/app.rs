@@ -1,7 +1,7 @@
-use crate::chain::{self, StakeInfo};
+use crate::chain::{self, NodeSyncSnapshot, NodeSyncState};
 use crate::config::{Lang, Settings};
 use crate::crypto::{self, WalletPayload, WalletSecrets};
-use crate::history::{self, TxKind, TxRecord};
+use crate::history::{self, TxRecord};
 use crate::i18n;
 use crate::ui;
 use eframe::egui;
@@ -20,8 +20,6 @@ use zeroize::Zeroize;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Page {
     Dashboard,
-    Send,
-    Stake,
     History,
     Settings,
 }
@@ -71,30 +69,6 @@ impl Toast {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct ReviewSend {
-    pub to: String,
-    pub amount: u128,
-    pub amount_raw: String,
-    pub hold_progress: f32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum StakeKind {
-    ScorerStake,
-    AggregatorStake,
-    ScorerUnstake,
-    AggregatorUnstake,
-}
-
-#[derive(Debug, Clone)]
-pub struct ReviewStake {
-    pub kind: StakeKind,
-    pub amount: Option<u128>,
-    pub endpoint: Option<String>,
-    pub hold_progress: f32,
-}
-
 // ────────────────────────────────────────────────────────────────────────────
 // Async worker plumbing
 // ────────────────────────────────────────────────────────────────────────────
@@ -102,40 +76,23 @@ pub struct ReviewStake {
 #[derive(Clone)]
 pub enum AsyncAction {
     RefreshAll(String, String), // rpc_url, address
-    RefreshBlock(String),
-    Transfer(String, WalletSecrets, String, u128),
-    Stake(String, WalletSecrets, String, u128, String),
-    Unstake(String, WalletSecrets, String),
+    RefreshNodeSync(String),
     Unlock(WalletPayload, String),
     Create(String, String),
     Import(String, String, std::path::PathBuf),
-    ImportSeedHex(String, String, std::path::PathBuf),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HistoryFilter {
     All,
     Send,
-    Stake,
-    Unstake,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ImportTab {
-    Mnemonic,
-    SeedHex,
 }
 
 pub enum AsyncResult {
     Balance(u128),
-    StakeStatus(Option<StakeInfo>, Option<StakeInfo>),
-    BlockHeight(u64),
+    NodeSync(NodeSyncSnapshot),
     ConnectionOk,
     ConnectionErr(String),
-    TransferOk(String),
-    TransferErr(String),
-    StakeOk(StakeKind, String),
-    StakeErr(String),
     UnlockOk(WalletSecrets, Option<WalletPayload>),
     UnlockErr(String),
     CreateOk(WalletPayload, WalletSecrets, String),
@@ -161,7 +118,6 @@ pub struct AliceWalletApp {
 
     // settings
     pub settings: Settings,
-    pub settings_rpc_draft: String,
     pub settings_lock_draft: String,
 
     // auth inputs
@@ -170,35 +126,18 @@ pub struct AliceWalletApp {
     pub confirm_password_input: String,
     pub mnemonic_words: Vec<String>,
     pub mnemonic_backup: String,
-    pub seed_hex_input: String,
-    pub import_tab: ImportTab,
     pub auth_error: String,
     pub unlock_fail_count: u32,
     pub unlock_block_until: Option<Instant>,
 
     // dashboard data
     pub balance: Option<u128>,
-    pub scorer_stake: Option<StakeInfo>,
-    pub agg_stake: Option<StakeInfo>,
     pub block_height: Option<u64>,
+    pub node_sync: NodeSyncSnapshot,
     pub sync_error: Option<String>,
     pub connection_status: ConnectionState,
     pub last_block_poll: Option<Instant>,
     pub last_data_poll: Option<Instant>,
-
-    // send
-    pub transfer_to: String,
-    pub transfer_amount: String,
-    pub transfer_error: Option<String>,
-    pub review_send: Option<ReviewSend>,
-
-    // stake
-    pub scorer_amount: String,
-    pub aggregator_amount: String,
-    pub scorer_endpoint: String,
-    pub aggregator_endpoint: String,
-    pub stake_error: Option<String>,
-    pub review_stake: Option<ReviewStake>,
 
     // history
     pub history: Vec<TxRecord>,
@@ -242,7 +181,6 @@ impl AliceWalletApp {
             wallet_path: default_wallet_path,
             payload: None,
             secrets: None,
-            settings_rpc_draft: settings.rpc_url.clone(),
             settings_lock_draft: settings.auto_lock_minutes.to_string(),
             settings,
             password_input: String::new(),
@@ -250,29 +188,16 @@ impl AliceWalletApp {
             confirm_password_input: String::new(),
             mnemonic_words: vec![String::new(); 24],
             mnemonic_backup: String::new(),
-            seed_hex_input: String::new(),
-            import_tab: ImportTab::Mnemonic,
             auth_error: String::new(),
             unlock_fail_count: 0,
             unlock_block_until: None,
             balance: None,
-            scorer_stake: None,
-            agg_stake: None,
             block_height: None,
+            node_sync: NodeSyncSnapshot::unavailable("not_checked"),
             sync_error: None,
             connection_status: ConnectionState::Connecting,
             last_block_poll: None,
             last_data_poll: None,
-            transfer_to: String::new(),
-            transfer_amount: String::new(),
-            transfer_error: None,
-            review_send: None,
-            scorer_amount: String::new(),
-            aggregator_amount: String::new(),
-            scorer_endpoint: String::new(),
-            aggregator_endpoint: String::new(),
-            stake_error: None,
-            review_stake: None,
             history: history::load(),
             history_filter: HistoryFilter::All,
             show_receive_qr: false,
@@ -337,9 +262,6 @@ impl AliceWalletApp {
         self.clear_password_inputs();
         self.clear_mnemonic_inputs();
         self.clear_mnemonic_backup();
-        self.seed_hex_input.zeroize();
-        self.seed_hex_input.clear();
-        self.import_tab = ImportTab::Mnemonic;
         self.auth_error.clear();
         self.phase = Phase::Import;
     }
@@ -355,8 +277,6 @@ impl AliceWalletApp {
     pub fn lock_now(&mut self) {
         self.secrets = None;
         self.balance = None;
-        self.scorer_stake = None;
-        self.agg_stake = None;
         self.clear_password_inputs();
         self.clear_mnemonic_inputs();
         self.clear_mnemonic_backup();
@@ -427,8 +347,7 @@ impl AliceWalletApp {
     /// Copy `text` to clipboard and schedule it to be cleared after 30 s.
     pub fn copy_sensitive(&mut self, ctx: &eframe::egui::Context, text: &str) {
         ctx.copy_text(text.to_string());
-        self.clipboard_clear_at =
-            Some(Instant::now() + std::time::Duration::from_secs(30));
+        self.clipboard_clear_at = Some(Instant::now() + std::time::Duration::from_secs(30));
     }
 
     /// Tick clipboard auto-clear. Called every frame.
@@ -478,7 +397,8 @@ fn spawn_worker(rt: Arc<Runtime>, rx: Receiver<AsyncAction>, tx: Sender<AsyncRes
                         match crypto::unlock_wallet(&payload, &password) {
                             Ok(u) => {
                                 password.zeroize();
-                                let _ = tx.send(AsyncResult::UnlockOk(u.secrets, u.upgraded_payload));
+                                let _ =
+                                    tx.send(AsyncResult::UnlockOk(u.secrets, u.upgraded_payload));
                             }
                             Err(e) => {
                                 let _ = tx.send(AsyncResult::UnlockErr(e));
@@ -510,45 +430,6 @@ fn spawn_worker(rt: Arc<Runtime>, rx: Receiver<AsyncAction>, tx: Sender<AsyncRes
                             }
                         }
                         phrase.zeroize();
-                        password.zeroize();
-                    });
-                }
-                AsyncAction::ImportSeedHex(mut seed_hex, mut password, target_path) => {
-                    let tx = tx.clone();
-                    std::thread::spawn(move || {
-                        let backup_result = crypto::backup_existing_wallet(&target_path);
-                        let backed_up = match backup_result {
-                            Ok(p) => p,
-                            Err(e) => {
-                                let _ = tx.send(AsyncResult::CreateErr(format!(
-                                    "Could not back up existing wallet: {}",
-                                    e
-                                )));
-                                seed_hex.zeroize();
-                                password.zeroize();
-                                return;
-                            }
-                        };
-                        match crypto::create_wallet_payload_from_seed_hex(&seed_hex, &password) {
-                            Ok(payload) => match crypto::unlock_wallet(&payload, &password) {
-                                Ok(unlocked) => {
-                                    seed_hex.zeroize();
-                                    password.zeroize();
-                                    let _ = tx.send(AsyncResult::ImportOk(
-                                        payload,
-                                        unlocked.secrets,
-                                        backed_up,
-                                    ));
-                                }
-                                Err(e) => {
-                                    let _ = tx.send(AsyncResult::CreateErr(e));
-                                }
-                            },
-                            Err(e) => {
-                                let _ = tx.send(AsyncResult::CreateErr(e));
-                            }
-                        }
-                        seed_hex.zeroize();
                         password.zeroize();
                     });
                 }
@@ -609,143 +490,36 @@ fn spawn_worker(rt: Arc<Runtime>, rx: Receiver<AsyncAction>, tx: Sender<AsyncRes
                                             )));
                                         }
                                     }
-                                    let scorer = chain::get_stake_status(
-                                        &client,
-                                        "ProofOfGradient",
-                                        "ScorerStakes",
-                                        &address,
-                                    )
-                                    .await
-                                    .ok()
-                                    .flatten();
-                                    let agg = chain::get_stake_status(
-                                        &client,
-                                        "ProofOfGradient",
-                                        "AggregatorStakes",
-                                        &address,
-                                    )
-                                    .await
-                                    .ok()
-                                    .flatten();
-                                    let _ = tx.send(AsyncResult::StakeStatus(scorer, agg));
-                                    if let Ok(blk) = chain::fetch_block_number(&url).await {
-                                        let _ = tx.send(AsyncResult::BlockHeight(blk));
-                                    }
+                                    let snapshot = chain::fetch_node_sync_snapshot(&url).await;
+                                    let _ = tx.send(AsyncResult::NodeSync(snapshot));
                                 }
                                 Err(e) => {
                                     let _ = tx.send(AsyncResult::ConnectionErr(e));
                                 }
                             }
                         };
-                        if tokio::time::timeout(Duration::from_secs(12), fut).await.is_err() {
+                        if tokio::time::timeout(Duration::from_secs(12), fut)
+                            .await
+                            .is_err()
+                        {
                             let _ = tx.send(AsyncResult::ConnectionErr(
                                 "RPC connection timed out".into(),
                             ));
                         }
                     });
                 }
-                AsyncAction::RefreshBlock(url) => {
+                AsyncAction::RefreshNodeSync(url) => {
                     let tx = tx.clone();
                     rt.spawn(async move {
-                        let fut = async {
-                            if let Ok(blk) = chain::fetch_block_number(&url).await {
-                                let _ = tx.send(AsyncResult::BlockHeight(blk));
-                                let _ = tx.send(AsyncResult::ConnectionOk);
+                        let fut = chain::fetch_node_sync_snapshot(&url);
+                        match tokio::time::timeout(Duration::from_secs(8), fut).await {
+                            Ok(snapshot) => {
+                                let _ = tx.send(AsyncResult::NodeSync(snapshot));
                             }
-                        };
-                        let _ = tokio::time::timeout(Duration::from_secs(8), fut).await;
-                    });
-                }
-                AsyncAction::Transfer(url, secrets, dest, amount) => {
-                    let tx = tx.clone();
-                    rt.spawn(async move {
-                        match chain::get_client(&url).await {
-                            Ok(client) => match secrets.to_keypair() {
-                                Ok(pair) => {
-                                    match chain::transfer(&client, pair, &dest, amount).await {
-                                        Ok(hash) => {
-                                            let _ = tx.send(AsyncResult::TransferOk(hash));
-                                        }
-                                        Err(e) => {
-                                            let _ = tx.send(AsyncResult::TransferErr(e));
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    let _ = tx.send(AsyncResult::TransferErr(e));
-                                }
-                            },
-                            Err(e) => {
-                                let _ = tx.send(AsyncResult::TransferErr(format!(
-                                    "Connection failed: {}",
-                                    e
-                                )));
-                            }
-                        }
-                    });
-                }
-                AsyncAction::Stake(url, secrets, role, amount, endpoint) => {
-                    let tx = tx.clone();
-                    rt.spawn(async move {
-                        let kind = if role == "scorer" {
-                            StakeKind::ScorerStake
-                        } else {
-                            StakeKind::AggregatorStake
-                        };
-                        match chain::get_client(&url).await {
-                            Ok(client) => match secrets.to_keypair() {
-                                Ok(pair) => {
-                                    match chain::stake(&client, pair, &role, amount, &endpoint)
-                                        .await
-                                    {
-                                        Ok(hash) => {
-                                            let _ = tx.send(AsyncResult::StakeOk(kind, hash));
-                                        }
-                                        Err(e) => {
-                                            let _ = tx.send(AsyncResult::StakeErr(e));
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    let _ = tx.send(AsyncResult::StakeErr(e));
-                                }
-                            },
-                            Err(e) => {
-                                let _ = tx.send(AsyncResult::StakeErr(format!(
-                                    "Connection failed: {}",
-                                    e
-                                )));
-                            }
-                        }
-                    });
-                }
-                AsyncAction::Unstake(url, secrets, role) => {
-                    let tx = tx.clone();
-                    rt.spawn(async move {
-                        let kind = if role == "scorer" {
-                            StakeKind::ScorerUnstake
-                        } else {
-                            StakeKind::AggregatorUnstake
-                        };
-                        match chain::get_client(&url).await {
-                            Ok(client) => match secrets.to_keypair() {
-                                Ok(pair) => match chain::unstake(&client, pair, &role).await {
-                                    Ok(hash) => {
-                                        let _ = tx.send(AsyncResult::StakeOk(kind, hash));
-                                    }
-                                    Err(e) => {
-                                        let _ = tx.send(AsyncResult::StakeErr(e));
-                                    }
-                                },
-                                Err(e) => {
-                                    let _ = tx.send(AsyncResult::StakeErr(e));
-                                }
-                            },
-                            Err(e) => {
-                                let _ = tx.send(AsyncResult::StakeErr(format!(
-                                    "Connection failed: {}",
-                                    e
-                                )));
+                            Err(_) => {
+                                let _ = tx.send(AsyncResult::NodeSync(
+                                    NodeSyncSnapshot::unavailable("node_status_timeout"),
+                                ));
                             }
                         }
                     });
@@ -809,10 +583,7 @@ impl eframe::App for AliceWalletApp {
 
         // Esc closes review modals
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            if !self.busy {
-                self.review_send = None;
-                self.review_stake = None;
-            }
+            if !self.busy {}
         }
 
         // Background block poll when on main phase
@@ -825,7 +596,7 @@ impl eframe::App for AliceWalletApp {
                 self.last_block_poll = Some(Instant::now());
                 let _ = self
                     .tx
-                    .send(AsyncAction::RefreshBlock(self.settings.rpc_url.clone()));
+                    .send(AsyncAction::RefreshNodeSync(self.settings.rpc_url.clone()));
             }
         }
 
@@ -844,7 +615,7 @@ impl eframe::App for AliceWalletApp {
             Phase::Main => ui::shell::render(ctx, self),
         }
 
-        if self.busy || self.auth_busy || self.refresh_pending > 0 || self.review_send.is_some() || self.review_stake.is_some() {
+        if self.busy || self.auth_busy || self.refresh_pending > 0 {
             ctx.request_repaint();
         } else {
             ctx.request_repaint_after(Duration::from_millis(500));
@@ -898,7 +669,8 @@ impl AliceWalletApp {
                 self.unlock_fail_count += 1;
                 let delay = Duration::from_millis(500 * (1 << self.unlock_fail_count.min(4)));
                 self.unlock_block_until = Some(Instant::now() + delay);
-                self.auth_error = format!("{} — wait {}s before retrying", err, delay.as_secs().max(1));
+                self.auth_error =
+                    format!("{} — wait {}s before retrying", err, delay.as_secs().max(1));
             }
             AsyncResult::CreateOk(payload, secrets, phrase) => {
                 self.auth_busy = false;
@@ -954,13 +726,17 @@ impl AliceWalletApp {
                 self.balance = Some(b);
                 self.connection_status = ConnectionState::Connected;
             }
-            AsyncResult::StakeStatus(scorer, agg) => {
-                self.scorer_stake = scorer;
-                self.agg_stake = agg;
-            }
-            AsyncResult::BlockHeight(n) => {
-                self.block_height = Some(n);
-                self.connection_status = ConnectionState::Connected;
+            AsyncResult::NodeSync(snapshot) => {
+                self.block_height = snapshot.current_height;
+                self.connection_status = match snapshot.status {
+                    NodeSyncState::Synced | NodeSyncState::Syncing => ConnectionState::Connected,
+                    NodeSyncState::Stale
+                    | NodeSyncState::Offline
+                    | NodeSyncState::Unavailable
+                    | NodeSyncState::Error => ConnectionState::Error,
+                };
+                self.sync_error = snapshot.fail_closed_reason.clone();
+                self.node_sync = snapshot;
             }
             AsyncResult::ConnectionOk => {
                 let was_error = matches!(self.connection_status, ConnectionState::Error);
@@ -983,100 +759,6 @@ impl AliceWalletApp {
                         self.t("toast.connection_lost"),
                     ));
                 }
-            }
-            AsyncResult::TransferOk(hash) => {
-                self.busy = false;
-                let amount = self.review_send.as_ref().map(|r| r.amount).unwrap_or(0);
-                let to = self
-                    .review_send
-                    .as_ref()
-                    .map(|r| r.to.clone())
-                    .unwrap_or_default();
-                self.review_send = None;
-                self.transfer_to.zeroize();
-                self.transfer_to.clear();
-                self.transfer_amount.zeroize();
-                self.transfer_amount.clear();
-                self.transfer_error = None;
-                self.push_history(TxRecord {
-                    ts: chrono::Utc::now(),
-                    kind: TxKind::Send,
-                    amount: Some(amount),
-                    counterparty: Some(to),
-                    hash: hash.clone(),
-                    ok: true,
-                });
-                self.toast = Some(Toast::ok("Transfer sent", hash));
-                if let Some(s) = self.secrets.clone() {
-                    self.start_refresh(&s.address);
-                }
-            }
-            AsyncResult::TransferErr(err) => {
-                self.busy = false;
-                let amount = self.review_send.as_ref().map(|r| r.amount).unwrap_or(0);
-                let to = self
-                    .review_send
-                    .as_ref()
-                    .map(|r| r.to.clone())
-                    .unwrap_or_default();
-                self.review_send = None;
-                self.transfer_error = Some(err.clone());
-                self.push_history(TxRecord {
-                    ts: chrono::Utc::now(),
-                    kind: TxKind::Send,
-                    amount: Some(amount),
-                    counterparty: Some(to),
-                    hash: format!("FAILED: {}", err),
-                    ok: false,
-                });
-                let title = self.t("toast.transfer_failed").to_string();
-                self.toast = Some(Toast::err(title, err));
-            }
-            AsyncResult::StakeOk(kind, hash) => {
-                self.busy = false;
-                let amount = self.review_stake.as_ref().and_then(|r| r.amount);
-                self.review_stake = None;
-                self.push_history(TxRecord {
-                    ts: chrono::Utc::now(),
-                    kind: match kind {
-                        StakeKind::ScorerStake => TxKind::StakeScorer,
-                        StakeKind::AggregatorStake => TxKind::StakeAggregator,
-                        StakeKind::ScorerUnstake => TxKind::UnstakeScorer,
-                        StakeKind::AggregatorUnstake => TxKind::UnstakeAggregator,
-                    },
-                    amount,
-                    counterparty: None,
-                    hash: hash.clone(),
-                    ok: true,
-                });
-                self.toast = Some(Toast::ok("Stake action confirmed", hash));
-                if let Some(s) = self.secrets.clone() {
-                    self.start_refresh(&s.address);
-                }
-            }
-            AsyncResult::StakeErr(err) => {
-                self.busy = false;
-                let kind = self.review_stake.as_ref().map(|r| r.kind.clone());
-                let amount = self.review_stake.as_ref().and_then(|r| r.amount);
-                self.review_stake = None;
-                self.stake_error = Some(err.clone());
-                if let Some(k) = kind {
-                    self.push_history(TxRecord {
-                        ts: chrono::Utc::now(),
-                        kind: match k {
-                            StakeKind::ScorerStake => TxKind::StakeScorer,
-                            StakeKind::AggregatorStake => TxKind::StakeAggregator,
-                            StakeKind::ScorerUnstake => TxKind::UnstakeScorer,
-                            StakeKind::AggregatorUnstake => TxKind::UnstakeAggregator,
-                        },
-                        amount,
-                        counterparty: None,
-                        hash: format!("FAILED: {}", err),
-                        ok: false,
-                    });
-                }
-                let title = self.t("toast.stake_failed").to_string();
-                self.toast = Some(Toast::err(title, err));
             }
             AsyncResult::SyncErr(err) => {
                 self.finish_refresh();

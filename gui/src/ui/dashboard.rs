@@ -18,13 +18,11 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
             };
             if ui
                 .add(
-                    egui::Button::new(
-                        RichText::new(refresh_label).size(12.5).color(THEME.text_hi),
-                    )
-                    .fill(THEME.bg_panel_hi)
-                    .stroke(Stroke::new(1.0, THEME.border_accent))
-                    .corner_radius(10)
-                    .min_size(egui::vec2(118.0, 34.0)),
+                    egui::Button::new(RichText::new(refresh_label).size(12.5).color(THEME.text_hi))
+                        .fill(THEME.bg_panel_hi)
+                        .stroke(Stroke::new(1.0, THEME.border_accent))
+                        .corner_radius(10)
+                        .min_size(egui::vec2(118.0, 34.0)),
                 )
                 .clicked()
                 && app.refresh_pending == 0
@@ -35,7 +33,7 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
     });
     ui.add_space(6.0);
 
-    // Top row: Balance card (big) + Stake summary
+    // Top row: Balance card (big) + node sync summary.
     ui.horizontal_top(|ui| {
         let total_w = ui.available_width();
         let left_w = (total_w * 0.62).max(420.0);
@@ -50,7 +48,7 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
         ui.add_space(16.0);
         ui.vertical(|ui| {
             ui.set_width(ui.available_width());
-            stake_summary(ui, app);
+            node_sync_summary(ui, app);
         });
     });
 
@@ -96,7 +94,11 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
     }
 }
 
-fn balance_card(ui: &mut egui::Ui, app: &mut AliceWalletApp, secrets: &crate::crypto::WalletSecrets) {
+fn balance_card(
+    ui: &mut egui::Ui,
+    app: &mut AliceWalletApp,
+    secrets: &crate::crypto::WalletSecrets,
+) {
     card_accent(ui, |ui| {
         section_title(ui, app.t("dash.total_balance"));
         ui.horizontal(|ui| {
@@ -113,12 +115,7 @@ fn balance_card(ui: &mut egui::Ui, app: &mut AliceWalletApp, secrets: &crate::cr
                     if app.refresh_pending > 0 {
                         ui.spinner();
                     } else {
-                        ui.label(
-                            RichText::new("—")
-                                .size(44.0)
-                                .strong()
-                                .color(THEME.text_dim),
-                        );
+                        ui.label(RichText::new("—").size(44.0).strong().color(THEME.text_dim));
                     }
                 }
             }
@@ -188,7 +185,7 @@ fn balance_card(ui: &mut egui::Ui, app: &mut AliceWalletApp, secrets: &crate::cr
                 .add_sized(
                     egui::vec2(w, 44.0),
                     egui::Button::new(
-                        RichText::new(app.t("dash.send_btn"))
+                        RichText::new(app.t("dash.receive_btn"))
                             .size(14.0)
                             .strong()
                             .color(Color32::from_rgb(10, 6, 2)),
@@ -198,14 +195,14 @@ fn balance_card(ui: &mut egui::Ui, app: &mut AliceWalletApp, secrets: &crate::cr
                 )
                 .clicked()
             {
-                app.page = Page::Send;
+                app.show_receive_qr = true;
             }
             ui.add_space(12.0);
             if ui
                 .add_sized(
                     egui::vec2(w, 44.0),
                     egui::Button::new(
-                        RichText::new(app.t("dash.stake_btn"))
+                        RichText::new(app.t("dash.history_btn"))
                             .size(14.0)
                             .color(THEME.text_hi),
                     )
@@ -215,7 +212,7 @@ fn balance_card(ui: &mut egui::Ui, app: &mut AliceWalletApp, secrets: &crate::cr
                 )
                 .clicked()
             {
-                app.page = Page::Stake;
+                app.page = Page::History;
             }
         });
     });
@@ -227,14 +224,16 @@ fn receive_qr_card(ui: &mut egui::Ui, app: &mut AliceWalletApp, address: &str) {
         ui.add_space(6.0);
         ui.vertical_centered(|ui| {
             if let Some(img) = render_qr(address) {
-                let tex = ui.ctx().load_texture(
-                    "address_qr",
-                    img,
-                    TextureOptions::NEAREST,
-                );
+                let tex = ui
+                    .ctx()
+                    .load_texture("address_qr", img, TextureOptions::NEAREST);
                 ui.image((tex.id(), egui::vec2(220.0, 220.0)));
             } else {
-                ui.label(RichText::new("QR generation failed").size(11.0).color(THEME.danger));
+                ui.label(
+                    RichText::new("QR generation failed")
+                        .size(11.0)
+                        .color(THEME.danger),
+                );
             }
             ui.add_space(8.0);
             ui.label(
@@ -281,26 +280,48 @@ fn render_qr(data: &str) -> Option<ColorImage> {
     })
 }
 
-fn stake_summary(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
+fn node_sync_summary(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
     card(ui, |ui| {
-        section_title(ui, app.t("dash.staking"));
+        section_title(ui, app.t("sync.title"));
         ui.add_space(4.0);
 
-        let scorer_label = app.t("dash.scorer");
-        let agg_label = app.t("dash.aggregator");
-        let not_staked = app.t("dash.not_staked");
-        stake_row(ui, scorer_label, app.scorer_stake.as_ref(), not_staked);
+        sync_row(
+            ui,
+            app.t("sync.status"),
+            app.t(app.node_sync.status_i18n_key()),
+        );
         ui.add_space(10.0);
-        stake_row(ui, agg_label, app.agg_stake.as_ref(), not_staked);
-        ui.add_space(12.0);
+        sync_row(ui, app.t("sync.mode"), app.node_sync.sync_mode.label());
+        ui.add_space(10.0);
+        let progress = app
+            .node_sync
+            .progress_percent
+            .map(|p| format!("{:.1}%", p))
+            .unwrap_or_else(|| app.t("sync.unavailable").to_string());
+        sync_row(ui, app.t("sync.progress"), &progress);
+        ui.add_space(10.0);
+        let remaining = app
+            .node_sync
+            .remaining_blocks
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| app.t("sync.unavailable").to_string());
+        sync_row(ui, app.t("sync.remaining"), &remaining);
+        ui.add_space(10.0);
+        let peers = app
+            .node_sync
+            .peers_count
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| app.node_sync.network_status.clone());
+        sync_row(ui, app.t("sync.network"), &peers);
 
-        if secondary_button(ui, app.t("dash.manage_stake"), true, true).clicked() {
-            app.page = Page::Stake;
+        if let Some(reason) = app.node_sync.fail_closed_reason.as_deref() {
+            ui.add_space(12.0);
+            error_banner(ui, &product_sync_reason(reason, app));
         }
     });
 }
 
-fn stake_row(ui: &mut egui::Ui, label: &str, info: Option<&crate::chain::StakeInfo>, not_staked: &str) {
+fn sync_row(ui: &mut egui::Ui, label: &str, value: &str) {
     egui::Frame::NONE
         .fill(THEME.bg_panel_hi)
         .corner_radius(10)
@@ -314,27 +335,22 @@ fn stake_row(ui: &mut egui::Ui, label: &str, info: Option<&crate::chain::StakeIn
                     .color(THEME.text_dim),
             );
             ui.add_space(4.0);
-            match info {
-                Some(s) => {
-                    ui.label(
-                        RichText::new(format_token(s.stake))
-                            .size(20.0)
-                            .strong()
-                            .color(THEME.text_hi),
-                    );
-                    ui.label(
-                        RichText::new(&s.status)
-                            .size(11.0)
-                            .color(THEME.primary_hi),
-                    );
-                }
-                None => {
-                    ui.label(
-                        RichText::new(not_staked)
-                            .size(14.0)
-                            .color(THEME.text_dim),
-                    );
-                }
-            }
+            ui.label(
+                RichText::new(value)
+                    .size(14.0)
+                    .strong()
+                    .color(THEME.text_hi),
+            );
         });
+}
+
+fn product_sync_reason(reason: &str, app: &AliceWalletApp) -> String {
+    match reason {
+        "missing_current_height" | "missing_target_height" | "missing_freshness" => {
+            app.t("sync.reason_incomplete").to_string()
+        }
+        "stale_node_evidence" => app.t("sync.reason_stale").to_string(),
+        "node_offline" | "node_status_timeout" => app.t("sync.reason_offline").to_string(),
+        _ => app.t("sync.reason_not_ready").to_string(),
+    }
 }

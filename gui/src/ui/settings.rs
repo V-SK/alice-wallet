@@ -1,7 +1,7 @@
 use super::theme::THEME;
 use super::widgets::*;
 use crate::app::{AliceWalletApp, Toast};
-use crate::config::{Lang, DEFAULT_AUTO_LOCK_MINUTES, DEFAULT_RPC_URL};
+use crate::config::{Lang, DEFAULT_AUTO_LOCK_MINUTES};
 use eframe::egui::{self, RichText, Stroke};
 
 pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
@@ -22,15 +22,29 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
         ui.horizontal(|ui| {
             for (lang, label) in [(Lang::En, "English"), (Lang::Zh, "中文")] {
                 let active = app.settings.lang == lang;
-                let bg = if active { THEME.primary_dim } else { THEME.bg_panel_hi };
-                let stroke = if active { THEME.border_accent } else { THEME.border };
+                let bg = if active {
+                    THEME.primary_dim
+                } else {
+                    THEME.bg_panel_hi
+                };
+                let stroke = if active {
+                    THEME.border_accent
+                } else {
+                    THEME.border
+                };
                 if ui
                     .add(
-                        egui::Button::new(RichText::new(label).size(12.5).strong().color(if active { THEME.text_hi } else { THEME.text_mid }))
-                            .fill(bg)
-                            .stroke(Stroke::new(1.0, stroke))
-                            .corner_radius(10)
-                            .min_size(egui::vec2(120.0, 34.0)),
+                        egui::Button::new(RichText::new(label).size(12.5).strong().color(
+                            if active {
+                                THEME.text_hi
+                            } else {
+                                THEME.text_mid
+                            },
+                        ))
+                        .fill(bg)
+                        .stroke(Stroke::new(1.0, stroke))
+                        .corner_radius(10)
+                        .min_size(egui::vec2(120.0, 34.0)),
                     )
                     .clicked()
                 {
@@ -45,46 +59,21 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
     ui.add_space(14.0);
 
     card(ui, |ui| {
-        let t_rpc = app.t("set.rpc");
-        let t_ws = app.t("set.ws_url");
-        section_title(ui, t_rpc);
-        field_label(ui, t_ws);
-        text_input(ui, &mut app.settings_rpc_draft, "wss://rpc.aliceprotocol.org");
+        section_title(ui, app.t("set.connection"));
         ui.add_space(8.0);
         ui.label(
-            RichText::new("Default: wss://rpc.aliceprotocol.org")
-                .size(11.0)
-                .color(THEME.text_dim),
+            RichText::new(app.t("set.connection_body"))
+                .size(12.0)
+                .color(THEME.text_mid),
         );
         ui.add_space(10.0);
-        ui.horizontal(|ui| {
-            if primary_button(ui, "Save RPC", true, false).clicked() {
-                let url = app.settings_rpc_draft.trim().to_string();
-                if url.is_empty() || !(url.starts_with("ws://") || url.starts_with("wss://")) {
-                    app.toast = Some(Toast::err(
-                        "Invalid RPC URL",
-                        "URL must start with ws:// or wss://",
-                    ));
-                } else {
-                    app.settings.rpc_url = url;
-                    match app.settings.save() {
-                        Ok(()) => {
-                            app.toast = Some(Toast::ok("Saved", "RPC endpoint updated"));
-                            if let Some(s) = app.secrets.clone() {
-                                app.start_refresh(&s.address);
-                            }
-                        }
-                        Err(e) => {
-                            app.toast = Some(Toast::err("Save failed", e));
-                        }
-                    }
-                }
-            }
-            ui.add_space(10.0);
-            if secondary_button(ui, "Reset to default", true, false).clicked() {
-                app.settings_rpc_draft = DEFAULT_RPC_URL.to_string();
-            }
-        });
+        settings_row(
+            ui,
+            app.t("sync.status"),
+            app.t(app.node_sync.status_i18n_key()),
+        );
+        ui.add_space(8.0);
+        settings_row(ui, app.t("sync.mode"), app.node_sync.sync_mode.label());
     });
 
     ui.add_space(14.0);
@@ -130,12 +119,11 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
     ui.add_space(14.0);
 
     card(ui, |ui| {
-        section_title(ui, "Wallet file");
+        section_title(ui, app.t("set.wallet_data"));
         ui.label(
-            RichText::new(app.wallet_path.display().to_string())
-                .size(11.5)
-                .family(egui::FontFamily::Monospace)
-                .color(THEME.text_hi),
+            RichText::new(app.t("set.wallet_data_body"))
+                .size(12.0)
+                .color(THEME.text_mid),
         );
         ui.add_space(10.0);
         if let Some(p) = &app.payload {
@@ -159,4 +147,25 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
             app.lock_now();
         }
     });
+}
+
+fn settings_row(ui: &mut egui::Ui, label: &str, value: &str) {
+    egui::Frame::NONE
+        .fill(THEME.bg_panel_hi)
+        .corner_radius(10)
+        .inner_margin(egui::Margin::symmetric(12, 9))
+        .stroke(Stroke::new(1.0, THEME.border))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(label.to_uppercase())
+                        .size(10.0)
+                        .strong()
+                        .color(THEME.text_dim),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(RichText::new(value).size(12.0).color(THEME.text_hi));
+                });
+            });
+        });
 }

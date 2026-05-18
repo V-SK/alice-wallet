@@ -16,10 +16,10 @@ impl TxKind {
     pub fn label(&self) -> &'static str {
         match self {
             TxKind::Send => "Send",
-            TxKind::StakeScorer => "Stake · Scorer",
-            TxKind::StakeAggregator => "Stake · Agg",
-            TxKind::UnstakeScorer => "Unstake · Scorer",
-            TxKind::UnstakeAggregator => "Unstake · Agg",
+            TxKind::StakeScorer
+            | TxKind::StakeAggregator
+            | TxKind::UnstakeScorer
+            | TxKind::UnstakeAggregator => "Legacy role action",
         }
     }
 }
@@ -36,11 +36,7 @@ pub struct TxRecord {
 
 fn history_path() -> PathBuf {
     dirs::data_local_dir()
-        .unwrap_or_else(|| {
-            dirs::home_dir()
-                .expect("home dir")
-                .join(".alice")
-        })
+        .unwrap_or_else(|| dirs::home_dir().expect("home dir").join(".alice"))
         .join("AliceWallet")
         .join("history.json")
 }

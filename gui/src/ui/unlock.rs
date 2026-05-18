@@ -52,24 +52,20 @@ pub fn render_choice(ctx: &egui::Context, app: &mut AliceWalletApp) {
         card_accent(ui, |ui| {
             heading(ui, "Local wallet detected");
             ui.add_space(6.0);
-            subtle(
-                ui,
-                "Choose whether to unlock the detected wallet file, import a recovery phrase, or create a new wallet.",
-            );
+            subtle(ui, "Choose whether to unlock the saved wallet, import a recovery phrase, or create a new wallet.");
             ui.add_space(18.0);
 
-            if let Some(path) = &app.detected_wallet_path {
+            if app.detected_wallet_path.is_some() {
                 egui::Frame::NONE
                     .fill(THEME.bg_panel_hi)
                     .corner_radius(10)
                     .inner_margin(egui::Margin::same(12))
                     .stroke(egui::Stroke::new(1.0, THEME.border))
                     .show(ui, |ui| {
-                        field_label(ui, "FILE");
+                        field_label(ui, "SAVED WALLET");
                         ui.label(
-                            RichText::new(path.display().to_string())
-                                .size(11.5)
-                                .family(egui::FontFamily::Monospace)
+                            RichText::new("Ready to unlock on this device")
+                                .size(12.0)
                                 .color(THEME.text_hi),
                         );
                         if let Some(p) = &app.payload {
@@ -104,7 +100,7 @@ pub fn render_unlock(ctx: &egui::Context, app: &mut AliceWalletApp) {
         card_accent(ui, |ui| {
             heading(ui, "Unlock wallet");
             ui.add_space(6.0);
-            subtle(ui, "Enter the password that encrypts this wallet file.");
+            subtle(ui, "Enter the password for this wallet.");
             ui.add_space(22.0);
 
             field_label(ui, "PASSWORD");

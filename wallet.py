@@ -543,7 +543,7 @@ def migrate_legacy_wallet_interactive(wallet_path: Path = DEFAULT_WALLET_PATH) -
     gc.collect()
 
 
-# ─── Staking / PoG Functions ───────────────────────────────────────────────
+# ─── Legacy reward-role compatibility guards ───────────────────────────────
 
 def _substrate(rpc_url: str) -> "SubstrateInterface":
     from substrateinterface import SubstrateInterface
@@ -575,114 +575,34 @@ def _decode_endpoint(raw) -> str:
 
 def stake_as_scorer(secrets: "WalletSecrets", amount: int, endpoint: str,
                     rpc_url: str = "wss://rpc.aliceprotocol.org") -> str:
-    """Stake *amount* whole ALICE as a scorer.
-    Returns the extrinsic hash.
-    """
-    si = _substrate(rpc_url)
-    keypair = secrets.to_keypair()
-    call = si.compose_call(
-        call_module="ProofOfGradient",
-        call_function="stake_as_scorer",
-        call_params={"amount": amount * 10 ** 12, "endpoint": _endpoint_to_hex(endpoint)},
-    )
-    ext = si.create_signed_extrinsic(call=call, keypair=keypair)
-    receipt = si.submit_extrinsic(ext, wait_for_inclusion=True)
-    si.close()
-    return receipt.extrinsic_hash
+    """Disabled legacy reward-role action retained for import compatibility."""
+    del secrets, amount, endpoint, rpc_url
+    raise RuntimeError("Old reward-role actions are unavailable in this wallet build.")
 
 
 def stake_as_aggregator(secrets: "WalletSecrets", amount: int, endpoint: str,
                         rpc_url: str = "wss://rpc.aliceprotocol.org") -> str:
-    """Stake *amount* whole ALICE as an aggregator.
-    Returns the extrinsic hash.
-    """
-    si = _substrate(rpc_url)
-    keypair = secrets.to_keypair()
-    call = si.compose_call(
-        call_module="ProofOfGradient",
-        call_function="stake_as_aggregator",
-        call_params={"amount": amount * 10 ** 12, "endpoint": _endpoint_to_hex(endpoint)},
-    )
-    ext = si.create_signed_extrinsic(call=call, keypair=keypair)
-    receipt = si.submit_extrinsic(ext, wait_for_inclusion=True)
-    si.close()
-    return receipt.extrinsic_hash
+    """Disabled legacy reward-role action retained for import compatibility."""
+    del secrets, amount, endpoint, rpc_url
+    raise RuntimeError("Old reward-role actions are unavailable in this wallet build.")
 
 
 def unstake_scorer(secrets: "WalletSecrets",
                    rpc_url: str = "wss://rpc.aliceprotocol.org") -> str:
-    """Begin cooldown to unstake from scorer role. Returns extrinsic hash."""
-    si = _substrate(rpc_url)
-    keypair = secrets.to_keypair()
-    call = si.compose_call(
-        call_module="ProofOfGradient",
-        call_function="unstake_scorer",
-        call_params={},
-    )
-    ext = si.create_signed_extrinsic(call=call, keypair=keypair)
-    receipt = si.submit_extrinsic(ext, wait_for_inclusion=True)
-    si.close()
-    return receipt.extrinsic_hash
+    """Disabled legacy reward-role action retained for import compatibility."""
+    del secrets, rpc_url
+    raise RuntimeError("Old reward-role actions are unavailable in this wallet build.")
 
 
 def unstake_aggregator(secrets: "WalletSecrets",
                        rpc_url: str = "wss://rpc.aliceprotocol.org") -> str:
-    """Begin cooldown to unstake from aggregator role. Returns extrinsic hash."""
-    si = _substrate(rpc_url)
-    keypair = secrets.to_keypair()
-    call = si.compose_call(
-        call_module="ProofOfGradient",
-        call_function="unstake_aggregator",
-        call_params={},
-    )
-    ext = si.create_signed_extrinsic(call=call, keypair=keypair)
-    receipt = si.submit_extrinsic(ext, wait_for_inclusion=True)
-    si.close()
-    return receipt.extrinsic_hash
+    """Disabled legacy reward-role action retained for import compatibility."""
+    del secrets, rpc_url
+    raise RuntimeError("Old reward-role actions are unavailable in this wallet build.")
 
 
 def get_stake_status(address: str,
                      rpc_url: str = "wss://rpc.aliceprotocol.org") -> dict:
-    """Query on-chain stake status for *address*.
-
-    Returns::
-
-        {
-            "balance": 12345,          # free balance in whole ALICE
-            "scorer": {               # None if not staked
-                "stake": 5000,
-                "status": "Active",
-                "endpoint": "http://1.2.3.4:8090"
-            },
-            "aggregator": None | {...}
-        }
-    """
-    si = _substrate(rpc_url)
-    UNIT = 10 ** 12
-
-    acct = si.query("System", "Account", [address])
-    free_raw = acct.value["data"]["free"] if acct and acct.value else 0
-    balance = int(free_raw) // UNIT
-
-    scorer_raw = si.query("ProofOfGradient", "ScorerStakes", [address])
-    scorer = None
-    if scorer_raw and scorer_raw.value:
-        v = scorer_raw.value
-        scorer = {
-            "stake": int(v.get("staked", 0)) // UNIT,
-            "status": _decode_status(v.get("status", {})),
-            "endpoint": _decode_endpoint(v.get("endpoint", "")),
-        }
-
-    agg_raw = si.query("ProofOfGradient", "AggregatorStakes", [address])
-    aggregator = None
-    if agg_raw and agg_raw.value:
-        v = agg_raw.value
-        aggregator = {
-            "stake": int(v.get("staked", 0)) // UNIT,
-            "status": _decode_status(v.get("status", {})),
-            "endpoint": _decode_endpoint(v.get("endpoint", "")),
-        }
-
-    si.close()
-    return {"balance": balance, "scorer": scorer, "aggregator": aggregator}
+    """Disabled legacy reward-role status retained for import compatibility."""
+    del address, rpc_url
+    raise RuntimeError("Old reward-role status is unavailable in this wallet build.")

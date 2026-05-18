@@ -5,14 +5,18 @@ use crate::config::Lang;
 use eframe::egui::{self, Color32, CornerRadius, RichText, Stroke};
 
 pub fn render(ctx: &egui::Context, app: &mut AliceWalletApp) {
-    // Global keyboard shortcuts: Cmd/Ctrl + 1..5 → switch page
+    // Global keyboard shortcuts: Cmd/Ctrl + 1..3 → switch page
     ctx.input(|i| {
         if i.modifiers.command {
-            if i.key_pressed(egui::Key::Num1) { app.page = Page::Dashboard; }
-            if i.key_pressed(egui::Key::Num2) { app.page = Page::Send; }
-            if i.key_pressed(egui::Key::Num3) { app.page = Page::Stake; }
-            if i.key_pressed(egui::Key::Num4) { app.page = Page::History; }
-            if i.key_pressed(egui::Key::Num5) { app.page = Page::Settings; }
+            if i.key_pressed(egui::Key::Num1) {
+                app.page = Page::Dashboard;
+            }
+            if i.key_pressed(egui::Key::Num2) {
+                app.page = Page::History;
+            }
+            if i.key_pressed(egui::Key::Num3) {
+                app.page = Page::Settings;
+            }
         }
     });
 
@@ -29,20 +33,27 @@ pub fn render(ctx: &egui::Context, app: &mut AliceWalletApp) {
             ui.horizontal_centered(|ui| {
                 // Connection dot
                 let (dot_color, dot_text) = match &app.connection_status {
-                    ConnectionState::Connected => (THEME.primary, app.t("shell.connected")),
-                    ConnectionState::Connecting => (Color32::from_rgb(255, 179, 64), app.t("shell.connecting")),
-                    ConnectionState::Error => (THEME.danger, app.t("shell.disconnected")),
+                    ConnectionState::Connected => {
+                        (THEME.primary, app.t(app.node_sync.status_i18n_key()))
+                    }
+                    ConnectionState::Connecting => {
+                        (Color32::from_rgb(255, 179, 64), app.t("shell.connecting"))
+                    }
+                    ConnectionState::Error => {
+                        (THEME.danger, app.t(app.node_sync.status_i18n_key()))
+                    }
                 };
-                let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
                 ui.painter().circle_filled(rect.center(), 5.0, dot_color);
                 ui.add_space(6.0);
-                ui.label(
-                    RichText::new(dot_text)
-                        .size(12.0)
-                        .color(THEME.text_mid),
-                );
+                ui.label(RichText::new(dot_text).size(12.0).color(THEME.text_mid));
                 ui.add_space(10.0);
-                ui.label(RichText::new(&app.settings.rpc_url).size(11.5).color(THEME.text_dim).family(egui::FontFamily::Monospace));
+                ui.label(
+                    RichText::new(app.node_sync.sync_mode.label())
+                        .size(11.5)
+                        .color(THEME.text_dim),
+                );
 
                 ui.add_space(16.0);
                 ui.separator();
@@ -57,11 +68,18 @@ pub fn render(ctx: &egui::Context, app: &mut AliceWalletApp) {
                             .family(egui::FontFamily::Monospace),
                     );
                 } else {
-                    ui.label(RichText::new(format!("{} #—", block_lbl)).size(12.0).color(THEME.text_dim));
+                    ui.label(
+                        RichText::new(format!("{} #—", block_lbl))
+                            .size(12.0)
+                            .color(THEME.text_dim),
+                    );
                 }
 
                 let lock_lbl = app.t("shell.lock");
-                let lang_lbl = match app.settings.lang { Lang::En => "中文", Lang::Zh => "EN" };
+                let lang_lbl = match app.settings.lang {
+                    Lang::En => "中文",
+                    Lang::Zh => "EN",
+                };
                 let auto_lbl = app.t("shell.auto_lock");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
@@ -91,7 +109,10 @@ pub fn render(ctx: &egui::Context, app: &mut AliceWalletApp) {
                         )
                         .clicked()
                     {
-                        app.settings.lang = match app.settings.lang { Lang::En => Lang::Zh, Lang::Zh => Lang::En };
+                        app.settings.lang = match app.settings.lang {
+                            Lang::En => Lang::Zh,
+                            Lang::Zh => Lang::En,
+                        };
                         let _ = app.settings.save();
                     }
                     ui.add_space(8.0);
@@ -144,13 +165,9 @@ pub fn render(ctx: &egui::Context, app: &mut AliceWalletApp) {
             ui.add_space(14.0);
 
             let l_dash = app.t("nav.dashboard");
-            let l_send = app.t("nav.send");
-            let l_stake = app.t("nav.stake");
             let l_hist = app.t("nav.history");
             let l_set = app.t("nav.settings");
             nav_item(ui, app, Page::Dashboard, "◈", l_dash);
-            nav_item(ui, app, Page::Send, "↗", l_send);
-            nav_item(ui, app, Page::Stake, "◆", l_stake);
             nav_item(ui, app, Page::History, "≡", l_hist);
             nav_item(ui, app, Page::Settings, "⚙", l_set);
 
@@ -161,14 +178,6 @@ pub fn render(ctx: &egui::Context, app: &mut AliceWalletApp) {
                         .size(10.5)
                         .color(THEME.text_dim),
                 );
-                if let Some(p) = app.wallet_path.to_str() {
-                    ui.label(
-                        RichText::new(p)
-                            .size(9.5)
-                            .color(THEME.text_dim)
-                            .family(egui::FontFamily::Monospace),
-                    );
-                }
                 ui.label(
                     RichText::new("Not all intelligence bends the knee.")
                         .size(10.0)
@@ -196,8 +205,6 @@ pub fn render(ctx: &egui::Context, app: &mut AliceWalletApp) {
                             ui.set_max_width(1000.0);
                             match app.page {
                                 Page::Dashboard => super::dashboard::render(ui, app),
-                                Page::Send => super::send::render(ui, app),
-                                Page::Stake => super::stake::render(ui, app),
                                 Page::History => super::history_view::render(ui, app),
                                 Page::Settings => super::settings::render(ui, app),
                             }
@@ -207,10 +214,6 @@ pub fn render(ctx: &egui::Context, app: &mut AliceWalletApp) {
                 });
         });
 
-    // Render any active modal on top
-    super::send::render_review_modal(ctx, app);
-    super::stake::render_review_modal(ctx, app);
-
     // Toast
     render_toast(ctx, app);
     let _ = widgets::format_token; // suppress unused when a page is hidden
@@ -218,7 +221,11 @@ pub fn render(ctx: &egui::Context, app: &mut AliceWalletApp) {
 
 fn nav_item(ui: &mut egui::Ui, app: &mut AliceWalletApp, page: Page, icon: &str, label: &str) {
     let active = app.page == page;
-    let bg = if active { THEME.primary_dim } else { Color32::TRANSPARENT };
+    let bg = if active {
+        THEME.primary_dim
+    } else {
+        Color32::TRANSPARENT
+    };
     let stroke = if active {
         Stroke::new(1.0, THEME.border_accent)
     } else {
@@ -231,18 +238,17 @@ fn nav_item(ui: &mut egui::Ui, app: &mut AliceWalletApp, page: Page, icon: &str,
         .stroke(stroke)
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(icon)
-                        .size(15.0)
-                        .color(if active { THEME.primary } else { THEME.text_mid }),
-                );
+                ui.label(RichText::new(icon).size(15.0).color(if active {
+                    THEME.primary
+                } else {
+                    THEME.text_mid
+                }));
                 ui.add_space(8.0);
-                ui.label(
-                    RichText::new(label)
-                        .size(13.5)
-                        .strong()
-                        .color(if active { THEME.text_hi } else { THEME.text_mid }),
-                );
+                ui.label(RichText::new(label).size(13.5).strong().color(if active {
+                    THEME.text_hi
+                } else {
+                    THEME.text_mid
+                }));
             });
         })
         .response
@@ -297,11 +303,7 @@ fn render_toast(ctx: &egui::Context, app: &mut AliceWalletApp) {
                             .color(text_c),
                     );
                     ui.add_space(3.0);
-                    ui.label(
-                        RichText::new(&toast.body)
-                            .size(11.5)
-                            .color(THEME.text_mid),
-                    );
+                    ui.label(RichText::new(&toast.body).size(11.5).color(THEME.text_mid));
                 });
         });
 }

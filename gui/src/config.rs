@@ -25,10 +25,6 @@ pub struct Settings {
     #[serde(default = "default_lock")]
     pub auto_lock_minutes: u32,
     #[serde(default)]
-    pub scorer_endpoint: String,
-    #[serde(default)]
-    pub aggregator_endpoint: String,
-    #[serde(default)]
     pub lang: Lang,
 }
 
@@ -44,8 +40,6 @@ impl Default for Settings {
         Self {
             rpc_url: default_rpc(),
             auto_lock_minutes: default_lock(),
-            scorer_endpoint: String::new(),
-            aggregator_endpoint: String::new(),
             lang: Lang::default(),
         }
     }
@@ -53,11 +47,7 @@ impl Default for Settings {
 
 pub fn config_path() -> PathBuf {
     dirs::data_local_dir()
-        .unwrap_or_else(|| {
-            dirs::home_dir()
-                .expect("home dir")
-                .join(".alice")
-        })
+        .unwrap_or_else(|| dirs::home_dir().expect("home dir").join(".alice"))
         .join("AliceWallet")
         .join("config.json")
 }
