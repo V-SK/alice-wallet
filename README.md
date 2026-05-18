@@ -4,8 +4,8 @@ Native desktop and command-line wallet for Alice Protocol.
 
 This feature branch is hardened for Phase40 internal review. It supports local
 encrypted wallet creation/import, backup verification, unlock, balance refresh,
-receive QR, transaction history, sanitized node sync status, settings, auto-lock,
-and English / Chinese UI.
+receive QR, safe transfer review, transaction history, account/address views,
+sanitized node sync status, settings, auto-lock, and English / Chinese UI.
 
 Live transfers, old reward-role actions, staking, governance, DeFi, approval
 grants, authorization grants, payout authority, settlement authority, mint
@@ -55,6 +55,9 @@ python cli.py balance YOUR_ADDRESS
 
 The CLI does not expose live transfer, old reward-role, staking, payout,
 settlement, or mint commands.
+
+The desktop Send view is a local review surface only. It checks address and
+amount formatting and does not send funds from this branch.
 
 ## Node Sync
 

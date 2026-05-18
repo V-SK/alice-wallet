@@ -16,12 +16,16 @@ class Phase40GuiSourceTests(unittest.TestCase):
         ui_mod = read("gui/src/ui/mod.rs")
 
         self.assertNotIn("Page::Stake", shell)
-        self.assertNotIn("Page::Send", shell)
         self.assertNotIn("Page::Stake", dashboard)
-        self.assertNotIn("Page::Send", dashboard)
-        self.assertNotIn("app.page = Page::Send", dashboard)
         self.assertNotIn("pub mod stake", ui_mod)
-        self.assertNotIn("pub mod send", ui_mod)
+        self.assertIn("Page::Receive", shell)
+        self.assertIn("Page::Send", shell)
+        self.assertIn("Page::Accounts", shell)
+        self.assertIn("Page::AddressBook", shell)
+        self.assertIn("pub mod receive", ui_mod)
+        self.assertIn("pub mod send", ui_mod)
+        self.assertIn("pub mod accounts", ui_mod)
+        self.assertIn("pub mod address_book", ui_mod)
 
     def test_raw_connection_and_local_file_paths_are_not_displayed(self):
         checked = "\n".join(
@@ -29,6 +33,11 @@ class Phase40GuiSourceTests(unittest.TestCase):
             for path in [
                 "gui/src/ui/shell.rs",
                 "gui/src/ui/dashboard.rs",
+                "gui/src/ui/receive.rs",
+                "gui/src/ui/send.rs",
+                "gui/src/ui/accounts.rs",
+                "gui/src/ui/address_book.rs",
+                "gui/src/ui/history_view.rs",
                 "gui/src/ui/settings.rs",
                 "gui/src/ui/unlock.rs",
             ]
@@ -38,6 +47,63 @@ class Phase40GuiSourceTests(unittest.TestCase):
         self.assertNotIn("wallet_path.display", checked)
         self.assertNotIn("detected_wallet_path.display", checked)
         self.assertNotIn("Save RPC", checked)
+
+    def test_safe_send_review_has_no_execution_path(self):
+        send_ui = read("gui/src/ui/send.rs")
+        app = read("gui/src/app.rs")
+        chain = read("gui/src/chain.rs")
+
+        self.assertIn("parse_token_amount", send_ui)
+        self.assertIn("validate_address", send_ui)
+        self.assertIn("send_review_ready", app)
+        self.assertIn("PRODUCTION_TRANSFER_ALLOWED: bool = false", chain)
+        for forbidden in [
+            "AsyncAction::Send",
+            "AsyncAction::Transfer",
+            "create_signed",
+            "sign_and_submit",
+            "compose_extrinsic",
+            "broadcast",
+            "submit_extrinsic",
+        ]:
+            self.assertNotIn(forbidden, send_ui)
+            self.assertNotIn(forbidden, app)
+
+    def test_receive_account_addressbook_do_not_expose_recovery_material(self):
+        checked = "\n".join(
+            read(path)
+            for path in [
+                "gui/src/ui/receive.rs",
+                "gui/src/ui/accounts.rs",
+                "gui/src/ui/address_book.rs",
+            ]
+        )
+        for forbidden in [
+            "mnemonic",
+            "seed",
+            "private",
+            "wallet_path",
+            "detected_wallet_path",
+            "cache",
+            "settings.rpc_url",
+            "command",
+        ]:
+            self.assertNotIn(forbidden, checked)
+
+    def test_history_sanitizes_transaction_identifiers(self):
+        history_ui = read("gui/src/ui/history_view.rs")
+        self.assertIn("short_tx_id", history_ui)
+        self.assertIn("hist.status_confirmed", read("gui/src/i18n.rs"))
+        self.assertNotIn("RichText::new(&rec.hash)", history_ui)
+        self.assertNotIn("wallet_path", history_ui)
+        self.assertNotIn("settings.rpc_url", history_ui)
+
+    def test_receive_sync_warning_is_productized(self):
+        receive_ui = read("gui/src/ui/receive.rs")
+        i18n = read("gui/src/i18n.rs")
+        self.assertIn("NodeSyncState::Synced", receive_ui)
+        self.assertIn("receive.sync_warning", receive_ui)
+        self.assertIn("余额和历史可能仍在更新", i18n)
 
     def test_raw_seed_import_surface_is_absent_from_gui(self):
         import_ui = read("gui/src/ui/import.rs")
@@ -84,6 +150,11 @@ class Phase40GuiSourceTests(unittest.TestCase):
             for path in [
                 "gui/src/ui/shell.rs",
                 "gui/src/ui/dashboard.rs",
+                "gui/src/ui/receive.rs",
+                "gui/src/ui/send.rs",
+                "gui/src/ui/accounts.rs",
+                "gui/src/ui/address_book.rs",
+                "gui/src/ui/history_view.rs",
                 "gui/src/ui/settings.rs",
                 "gui/src/ui/unlock.rs",
                 "gui/src/i18n.rs",
@@ -97,6 +168,10 @@ class Phase40GuiSourceTests(unittest.TestCase):
             "human approval",
             "provider",
             "测试版",
+            "governance",
+            "DeFi",
+            "approval grant",
+            "payout authority",
         ]
         for term in forbidden:
             self.assertNotIn(term, checked)

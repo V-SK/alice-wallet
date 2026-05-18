@@ -20,7 +20,11 @@ use zeroize::Zeroize;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Page {
     Dashboard,
+    Receive,
+    Send,
     History,
+    Accounts,
+    AddressBook,
     Settings,
 }
 
@@ -143,6 +147,11 @@ pub struct AliceWalletApp {
     pub history: Vec<TxRecord>,
     pub history_filter: HistoryFilter,
     pub show_receive_qr: bool,
+    pub send_recipient: String,
+    pub send_amount: String,
+    pub send_note: String,
+    pub send_review_ready: bool,
+    pub send_review_error: Option<String>,
     pub lock_warn_shown: bool,
 
     // ui ephemeral
@@ -201,6 +210,11 @@ impl AliceWalletApp {
             history: history::load(),
             history_filter: HistoryFilter::All,
             show_receive_qr: false,
+            send_recipient: String::new(),
+            send_amount: String::new(),
+            send_note: String::new(),
+            send_review_ready: false,
+            send_review_error: None,
             lock_warn_shown: false,
             address_copied_at: None,
             mnemonic_copied_at: None,
@@ -384,6 +398,11 @@ impl AliceWalletApp {
             self.history.truncate(500);
         }
         history::append(rec);
+    }
+
+    pub fn reset_send_review(&mut self) {
+        self.send_review_ready = false;
+        self.send_review_error = None;
     }
 }
 

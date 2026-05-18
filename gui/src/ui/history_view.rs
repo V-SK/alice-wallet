@@ -2,7 +2,7 @@ use super::theme::THEME;
 use super::widgets::*;
 use crate::app::{AliceWalletApp, HistoryFilter};
 use crate::history::{TxKind, TxRecord};
-use eframe::egui::{self, Color32, RichText, Stroke};
+use eframe::egui::{self, RichText, Stroke};
 
 pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
     section_title(ui, app.t("hist.title"));
@@ -45,7 +45,7 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
             return;
         }
         for rec in filtered.iter() {
-            render_row(ui, rec);
+            render_row(ui, rec, app);
         }
     });
 }
@@ -87,12 +87,25 @@ fn chip(ui: &mut egui::Ui, app: &mut AliceWalletApp, filter: HistoryFilter, labe
     ui.add_space(6.0);
 }
 
-pub fn render_row(ui: &mut egui::Ui, rec: &TxRecord) {
+pub fn render_row(ui: &mut egui::Ui, rec: &TxRecord, app: &AliceWalletApp) {
     let (icon, icon_color) = match rec.kind {
         TxKind::Send => ("↗", THEME.primary),
         TxKind::StakeScorer | TxKind::StakeAggregator => ("◆", THEME.primary_hi),
         TxKind::UnstakeScorer | TxKind::UnstakeAggregator => ("◇", THEME.text_mid),
     };
+    let direction = match rec.kind {
+        TxKind::Send => app.t("hist.kind_sent"),
+        TxKind::StakeScorer
+        | TxKind::StakeAggregator
+        | TxKind::UnstakeScorer
+        | TxKind::UnstakeAggregator => app.t("hist.kind_archived"),
+    };
+    let status = if rec.ok {
+        app.t("hist.status_confirmed")
+    } else {
+        app.t("hist.status_not_ready")
+    };
+    let tx_id = short_tx_id(&rec.hash);
     egui::Frame::NONE
         .fill(THEME.bg_panel_hi)
         .corner_radius(10)
@@ -107,7 +120,7 @@ pub fn render_row(ui: &mut egui::Ui, rec: &TxRecord) {
                 ui.add_space(10.0);
                 ui.vertical(|ui| {
                     ui.label(
-                        RichText::new(rec.kind.label())
+                        RichText::new(direction)
                             .size(13.0)
                             .strong()
                             .color(THEME.text_hi),
@@ -125,6 +138,13 @@ pub fn render_row(ui: &mut egui::Ui, rec: &TxRecord) {
                             .color(THEME.text_mid)
                             .family(egui::FontFamily::Monospace),
                     );
+                    ui.add_space(2.0);
+                    ui.label(
+                        RichText::new(format!("{} · {}", status, tx_id))
+                            .size(10.5)
+                            .color(THEME.text_dim)
+                            .family(egui::FontFamily::Monospace),
+                    );
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(
@@ -133,24 +153,33 @@ pub fn render_row(ui: &mut egui::Ui, rec: &TxRecord) {
                             .color(THEME.text_dim),
                     );
                     ui.add_space(10.0);
-                    ui.label(
-                        RichText::new(if rec.ok { "✓" } else { "✗" })
-                            .size(13.0)
-                            .color(if rec.ok { THEME.primary } else { THEME.danger }),
-                    );
+                    ui.label(RichText::new(status).size(11.0).color(if rec.ok {
+                        THEME.primary
+                    } else {
+                        THEME.danger
+                    }));
                 });
             });
-            ui.add_space(2.0);
-            ui.label(
-                RichText::new(&rec.hash)
-                    .size(10.0)
-                    .family(egui::FontFamily::Monospace)
-                    .color(if rec.ok {
-                        THEME.text_dim
-                    } else {
-                        Color32::from_rgb(255, 120, 120)
-                    }),
-            );
         });
     ui.add_space(6.0);
+}
+
+fn short_tx_id(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("failed") {
+        return "tx unavailable".into();
+    }
+    if trimmed.len() <= 18 {
+        return trimmed.to_string();
+    }
+    let head: String = trimmed.chars().take(8).collect();
+    let tail: String = trimmed
+        .chars()
+        .rev()
+        .take(8)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+    format!("{}…{}", head, tail)
 }

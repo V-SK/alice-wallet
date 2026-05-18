@@ -1,8 +1,12 @@
+pub mod accounts;
+pub mod address_book;
 pub mod backup;
 pub mod create;
 pub mod dashboard;
 pub mod history_view;
 pub mod import;
+pub mod receive;
+pub mod send;
 pub mod settings;
 pub mod shell;
 pub mod theme;

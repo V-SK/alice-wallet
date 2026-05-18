@@ -82,8 +82,9 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
             });
             ui.add_space(12.0);
         } else {
-            for rec in app.history.iter().take(5) {
-                super::history_view::render_row(ui, rec);
+            let recent: Vec<_> = app.history.iter().take(5).cloned().collect();
+            for rec in recent.iter() {
+                super::history_view::render_row(ui, rec, app);
             }
         }
     });
@@ -195,14 +196,14 @@ fn balance_card(
                 )
                 .clicked()
             {
-                app.show_receive_qr = true;
+                app.page = Page::Receive;
             }
             ui.add_space(12.0);
             if ui
                 .add_sized(
                     egui::vec2(w, 44.0),
                     egui::Button::new(
-                        RichText::new(app.t("dash.history_btn"))
+                        RichText::new(app.t("dash.send_review_btn"))
                             .size(14.0)
                             .color(THEME.text_hi),
                     )
@@ -212,7 +213,7 @@ fn balance_card(
                 )
                 .clicked()
             {
-                app.page = Page::History;
+                app.page = Page::Send;
             }
         });
     });

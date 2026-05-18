@@ -12,18 +12,6 @@ pub enum TxKind {
     UnstakeAggregator,
 }
 
-impl TxKind {
-    pub fn label(&self) -> &'static str {
-        match self {
-            TxKind::Send => "Send",
-            TxKind::StakeScorer
-            | TxKind::StakeAggregator
-            | TxKind::UnstakeScorer
-            | TxKind::UnstakeAggregator => "Legacy role action",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TxRecord {
     pub ts: DateTime<Utc>,
