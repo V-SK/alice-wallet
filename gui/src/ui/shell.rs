@@ -5,7 +5,7 @@ use crate::config::Lang;
 use eframe::egui::{self, Color32, CornerRadius, RichText, Stroke};
 
 pub fn render(ctx: &egui::Context, app: &mut AliceWalletApp) {
-    // Global keyboard shortcuts: Cmd/Ctrl + 1..7 → switch page
+    // Global keyboard shortcuts: Cmd/Ctrl + 1..8 → switch page
     ctx.input(|i| {
         if i.modifiers.command {
             if i.key_pressed(egui::Key::Num1) {
@@ -18,15 +18,18 @@ pub fn render(ctx: &egui::Context, app: &mut AliceWalletApp) {
                 app.page = Page::Send;
             }
             if i.key_pressed(egui::Key::Num4) {
-                app.page = Page::History;
+                app.page = Page::Mining;
             }
             if i.key_pressed(egui::Key::Num5) {
-                app.page = Page::Accounts;
+                app.page = Page::History;
             }
             if i.key_pressed(egui::Key::Num6) {
-                app.page = Page::AddressBook;
+                app.page = Page::Accounts;
             }
             if i.key_pressed(egui::Key::Num7) {
+                app.page = Page::AddressBook;
+            }
+            if i.key_pressed(egui::Key::Num8) {
                 app.page = Page::Settings;
             }
         }
@@ -179,6 +182,7 @@ pub fn render(ctx: &egui::Context, app: &mut AliceWalletApp) {
             let l_dash = app.t("nav.dashboard");
             let l_receive = app.t("nav.receive");
             let l_send = app.t("nav.send");
+            let l_mining = app.t("nav.mining");
             let l_hist = app.t("nav.history");
             let l_accounts = app.t("nav.accounts");
             let l_book = app.t("nav.address_book");
@@ -186,6 +190,7 @@ pub fn render(ctx: &egui::Context, app: &mut AliceWalletApp) {
             nav_item(ui, app, Page::Dashboard, "◈", l_dash);
             nav_item(ui, app, Page::Receive, "↓", l_receive);
             nav_item(ui, app, Page::Send, "↑", l_send);
+            nav_item(ui, app, Page::Mining, "▣", l_mining);
             nav_item(ui, app, Page::History, "≡", l_hist);
             nav_item(ui, app, Page::Accounts, "●", l_accounts);
             nav_item(ui, app, Page::AddressBook, "◇", l_book);
@@ -227,6 +232,7 @@ pub fn render(ctx: &egui::Context, app: &mut AliceWalletApp) {
                                 Page::Dashboard => super::dashboard::render(ui, app),
                                 Page::Receive => super::receive::render(ui, app),
                                 Page::Send => super::send::render(ui, app),
+                                Page::Mining => super::mining::render(ui, app),
                                 Page::History => super::history_view::render(ui, app),
                                 Page::Accounts => super::accounts::render(ui, app),
                                 Page::AddressBook => super::address_book::render(ui, app),

@@ -5,6 +5,7 @@ pub mod create;
 pub mod dashboard;
 pub mod history_view;
 pub mod import;
+pub mod mining;
 pub mod receive;
 pub mod send;
 pub mod settings;

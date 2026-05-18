@@ -5,7 +5,8 @@ Native desktop and command-line wallet for Alice Protocol.
 This feature branch is hardened for Phase40 internal review. It supports local
 encrypted wallet creation/import, backup verification, unlock, balance refresh,
 receive QR, safe transfer review, transaction history, account/address views,
-sanitized node sync status, settings, auto-lock, and English / Chinese UI.
+sanitized node sync status, wallet XMR mining status/reward display, settings,
+auto-lock, and English / Chinese UI.
 
 Live transfers, old reward-role actions, staking, governance, DeFi, approval
 grants, authorization grants, payout authority, settlement authority, mint
@@ -58,6 +59,14 @@ settlement, or mint commands.
 
 The desktop Send view is a local review surface only. It checks address and
 amount formatting and does not send funds from this branch.
+
+## Wallet Mining
+
+The desktop Mining view is scoped to Alice-approved XMR contribution status
+only. It uses the selected wallet account/address as the Alice reward identity,
+does not expose pool configuration, and does not start a miner from this branch.
+Estimated rewards are display-only and daily confirmed rewards require
+accepted-share evidence.
 
 ## Node Sync
 

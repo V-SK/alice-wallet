@@ -1,200 +1,191 @@
 #![allow(dead_code)]
 
 use crate::chain;
-use std::path::PathBuf;
+
+pub const MINING_EXECUTION_ALLOWED: bool = false;
+pub const CUSTOM_POOL_ALLOWED: bool = false;
+pub const LTC_DOGE_ALLOWED: bool = false;
+pub const AI_JOBS_ALLOWED: bool = false;
+pub const POOL_CONFIG_VISIBLE: bool = false;
+pub const PAYOUT_RELEASE_ALLOWED: bool = false;
+pub const SETTLEMENT_ALLOWED: bool = false;
+pub const MINT_ALLOWED: bool = false;
+pub const REWARD_EVIDENCE_TTL_SECONDS: u64 = 180;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MinerProfile {
-    LocalCpu,
-    LocalGpu,
-    Pool,
+pub enum WalletMiningRouteKind {
+    WalletXmr,
+}
+
+impl WalletMiningRouteKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            WalletMiningRouteKind::WalletXmr => "Wallet XMR",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NodeMiningReadiness {
-    NotRequired,
-    RequiredReady,
-    RequiredDisconnected,
-    RequiredUnsynced,
+pub enum WalletMiningStatus {
+    Preparing,
+    EvidenceAvailable,
+    EvidenceStale,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RewardEvidenceStatus {
+    Pending,
+    Fresh,
+    Stale,
+    Unavailable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MinerConfig {
-    pub profile: MinerProfile,
-    pub binary_path: PathBuf,
-    pub payout_address: String,
-    pub threads: u16,
-    pub endpoint: Option<String>,
-    pub data_dir: Option<PathBuf>,
-    pub extra_args: Vec<String>,
+pub struct WalletMiningRoute {
+    pub route_kind: WalletMiningRouteKind,
+    pub alice_approved_route: bool,
+    pub custom_pool_allowed: bool,
+    pub ltc_doge_allowed: bool,
+    pub ai_jobs_allowed: bool,
+    pub mining_execution_allowed: bool,
+    pub pool_config_visible: bool,
+    pub reward_identity: String,
+    pub worker_identity: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MinerStartPolicy {
-    pub binary_exists: bool,
-    pub binary_verified: bool,
-    pub wallet_backup_complete: bool,
-    pub remote_trust_acknowledged: bool,
-    pub node_readiness: NodeMiningReadiness,
+pub struct AcceptedShareEvidence {
+    pub accepted_shares: u64,
+    pub rejected_shares: u64,
+    pub estimated_rewards: String,
+    pub confirmed_rewards: String,
+    pub freshness_seconds: u64,
+    pub daily_window: String,
+    pub last_updated_at: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MinerCommand {
-    pub program: PathBuf,
-    pub args: Vec<String>,
+pub struct WalletRewardProjection {
+    pub estimated_rewards: String,
+    pub confirmed_rewards: String,
+    pub pending_rewards: String,
+    pub held_rewards: String,
+    pub released_rewards: String,
+    pub accepted_shares: u64,
+    pub rejected_shares: u64,
+    pub evidence_status: RewardEvidenceStatus,
+    pub evidence_freshness_seconds: Option<u64>,
+    pub daily_window: String,
+    pub last_updated_at: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MinerStartBlock {
-    BinaryMissing,
-    BinaryUnverified,
-    InvalidPayoutAddress,
-    InvalidThreadCount,
-    MissingPoolEndpoint,
-    LocalNodeDisconnected,
-    LocalNodeUnsynced,
-    WalletBackupRequired,
-    RemoteTrustNotAcknowledged,
-    SensitiveArgument(String),
+pub struct WalletMiningStatusPacket {
+    pub route: WalletMiningRoute,
+    pub mining_status: WalletMiningStatus,
+    pub rewards: WalletRewardProjection,
 }
 
-pub fn build_miner_command(
-    config: &MinerConfig,
-    policy: &MinerStartPolicy,
-) -> Result<MinerCommand, MinerStartBlock> {
-    validate_start(config, policy)?;
-
-    let mut args = vec![
-        "--payout-address".to_string(),
-        config.payout_address.trim().to_string(),
-        "--threads".to_string(),
-        config.threads.to_string(),
-    ];
-
-    match config.profile {
-        MinerProfile::LocalCpu => {
-            args.push("--mode".to_string());
-            args.push("local-cpu".to_string());
-        }
-        MinerProfile::LocalGpu => {
-            args.push("--mode".to_string());
-            args.push("local-gpu".to_string());
-        }
-        MinerProfile::Pool => {
-            args.push("--mode".to_string());
-            args.push("pool".to_string());
-            args.push("--endpoint".to_string());
-            args.push(
-                config
-                    .endpoint
-                    .as_deref()
-                    .unwrap_or_default()
-                    .trim()
-                    .to_string(),
-            );
-        }
-    }
-
-    if let Some(data_dir) = &config.data_dir {
-        args.push("--data-dir".to_string());
-        args.push(data_dir.display().to_string());
-    }
-
-    args.extend(config.extra_args.iter().cloned());
-
-    Ok(MinerCommand {
-        program: config.binary_path.clone(),
-        args,
+pub fn wallet_xmr_route(reward_identity: &str) -> Result<WalletMiningRoute, String> {
+    let trimmed = reward_identity.trim();
+    chain::validate_address(trimmed)?;
+    Ok(WalletMiningRoute {
+        route_kind: WalletMiningRouteKind::WalletXmr,
+        alice_approved_route: true,
+        custom_pool_allowed: CUSTOM_POOL_ALLOWED,
+        ltc_doge_allowed: LTC_DOGE_ALLOWED,
+        ai_jobs_allowed: AI_JOBS_ALLOWED,
+        mining_execution_allowed: MINING_EXECUTION_ALLOWED,
+        pool_config_visible: POOL_CONFIG_VISIBLE,
+        reward_identity: trimmed.to_string(),
+        worker_identity: worker_identity(trimmed),
     })
 }
 
-pub fn validate_start(
-    config: &MinerConfig,
-    policy: &MinerStartPolicy,
-) -> Result<(), MinerStartBlock> {
-    if !policy.binary_exists {
-        return Err(MinerStartBlock::BinaryMissing);
-    }
-    if !policy.binary_verified {
-        return Err(MinerStartBlock::BinaryUnverified);
-    }
-    if config.threads == 0 {
-        return Err(MinerStartBlock::InvalidThreadCount);
-    }
-    if chain::validate_address(config.payout_address.trim()).is_err() {
-        return Err(MinerStartBlock::InvalidPayoutAddress);
-    }
-    if !policy.wallet_backup_complete {
-        return Err(MinerStartBlock::WalletBackupRequired);
-    }
-    reject_sensitive_args(&config.extra_args)?;
-
-    match config.profile {
-        MinerProfile::LocalCpu | MinerProfile::LocalGpu => match policy.node_readiness {
-            NodeMiningReadiness::RequiredReady => {}
-            NodeMiningReadiness::RequiredDisconnected => {
-                return Err(MinerStartBlock::LocalNodeDisconnected);
-            }
-            NodeMiningReadiness::RequiredUnsynced => {
-                return Err(MinerStartBlock::LocalNodeUnsynced);
-            }
-            NodeMiningReadiness::NotRequired => {}
-        },
-        MinerProfile::Pool => {
-            let endpoint = config.endpoint.as_deref().unwrap_or_default().trim();
-            if endpoint.is_empty() {
-                return Err(MinerStartBlock::MissingPoolEndpoint);
-            }
-            if !policy.remote_trust_acknowledged {
-                return Err(MinerStartBlock::RemoteTrustNotAcknowledged);
-            }
-        }
-    }
-
-    Ok(())
+pub fn rehearsal_status_packet(
+    reward_identity: &str,
+    evidence: Option<AcceptedShareEvidence>,
+) -> Result<WalletMiningStatusPacket, String> {
+    let route = wallet_xmr_route(reward_identity)?;
+    let rewards = evaluate_reward_projection(evidence);
+    let mining_status = match rewards.evidence_status {
+        RewardEvidenceStatus::Fresh => WalletMiningStatus::EvidenceAvailable,
+        RewardEvidenceStatus::Stale => WalletMiningStatus::EvidenceStale,
+        RewardEvidenceStatus::Pending => WalletMiningStatus::Preparing,
+        RewardEvidenceStatus::Unavailable => WalletMiningStatus::Unavailable,
+    };
+    Ok(WalletMiningStatusPacket {
+        route,
+        mining_status,
+        rewards,
+    })
 }
 
-pub fn payout_address_change_allowed(wallet_unlocked: bool, manual_entry_confirmed: bool) -> bool {
-    wallet_unlocked || manual_entry_confirmed
-}
+pub fn evaluate_reward_projection(
+    evidence: Option<AcceptedShareEvidence>,
+) -> WalletRewardProjection {
+    let Some(evidence) = evidence else {
+        return WalletRewardProjection {
+            estimated_rewards: "0 ALICE".into(),
+            confirmed_rewards: "0 ALICE".into(),
+            pending_rewards: "Pending pool evidence".into(),
+            held_rewards: "0 ALICE".into(),
+            released_rewards: "Unavailable".into(),
+            accepted_shares: 0,
+            rejected_shares: 0,
+            evidence_status: RewardEvidenceStatus::Pending,
+            evidence_freshness_seconds: None,
+            daily_window: "Daily pool evidence window".into(),
+            last_updated_at: "Unavailable".into(),
+        };
+    };
 
-pub fn redact_miner_log_line(line: &str) -> String {
-    let lower = line.to_ascii_lowercase();
-    if sensitive_markers()
-        .iter()
-        .any(|marker| lower.contains(marker))
-    {
-        "[redacted sensitive miner log]".to_string()
-    } else {
-        line.to_string()
+    if evidence.freshness_seconds > REWARD_EVIDENCE_TTL_SECONDS {
+        return WalletRewardProjection {
+            estimated_rewards: evidence.estimated_rewards,
+            confirmed_rewards: "0 ALICE".into(),
+            pending_rewards: "Pending fresh pool evidence".into(),
+            held_rewards: "Held for fresh evidence".into(),
+            released_rewards: "Unavailable".into(),
+            accepted_shares: evidence.accepted_shares,
+            rejected_shares: evidence.rejected_shares,
+            evidence_status: RewardEvidenceStatus::Stale,
+            evidence_freshness_seconds: Some(evidence.freshness_seconds),
+            daily_window: evidence.daily_window,
+            last_updated_at: evidence.last_updated_at,
+        };
+    }
+
+    WalletRewardProjection {
+        estimated_rewards: evidence.estimated_rewards,
+        confirmed_rewards: evidence.confirmed_rewards,
+        pending_rewards: "0 ALICE".into(),
+        held_rewards: "0 ALICE".into(),
+        released_rewards: "Unavailable".into(),
+        accepted_shares: evidence.accepted_shares,
+        rejected_shares: evidence.rejected_shares,
+        evidence_status: RewardEvidenceStatus::Fresh,
+        evidence_freshness_seconds: Some(evidence.freshness_seconds),
+        daily_window: evidence.daily_window,
+        last_updated_at: evidence.last_updated_at,
     }
 }
 
-fn reject_sensitive_args(args: &[String]) -> Result<(), MinerStartBlock> {
-    for arg in args {
-        let lower = arg.to_ascii_lowercase();
-        if let Some(marker) = sensitive_markers()
-            .iter()
-            .find(|marker| lower.contains(*marker))
-        {
-            return Err(MinerStartBlock::SensitiveArgument((*marker).to_string()));
-        }
+fn worker_identity(address: &str) -> String {
+    if address.len() <= 16 {
+        return format!("wallet-{}", address);
     }
-    Ok(())
-}
-
-fn sensitive_markers() -> &'static [&'static str] {
-    &[
-        "mnemonic",
-        "private-key",
-        "private_key",
-        "secret-key",
-        "secret_key",
-        "wallet-password",
-        "wallet_password",
-        "password",
-        "seed",
-    ]
+    let head: String = address.chars().take(8).collect();
+    let tail: String = address
+        .chars()
+        .rev()
+        .take(6)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+    format!("wallet-{}{}", head, tail)
 }
 
 #[cfg(test)]
@@ -205,156 +196,87 @@ mod tests {
     fn valid_address() -> &'static str {
         static ADDRESS: OnceLock<String> = OnceLock::new();
         ADDRESS.get_or_init(|| {
+            let unlock_phrase = "miner-test-passphrase";
             crate::crypto::create_wallet_payload(
                 "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-                "miner-test-password",
+                unlock_phrase,
             )
             .expect("test wallet payload")
             .address
         })
     }
 
-    fn base_config(profile: MinerProfile) -> MinerConfig {
-        MinerConfig {
-            profile,
-            binary_path: PathBuf::from("/opt/alice/bin/alice-miner"),
-            payout_address: valid_address().to_string(),
-            threads: 4,
-            endpoint: None,
-            data_dir: Some(PathBuf::from("/tmp/alice-miner-data")),
-            extra_args: vec![],
-        }
-    }
-
-    fn base_policy() -> MinerStartPolicy {
-        MinerStartPolicy {
-            binary_exists: true,
-            binary_verified: true,
-            wallet_backup_complete: true,
-            remote_trust_acknowledged: false,
-            node_readiness: NodeMiningReadiness::RequiredReady,
-        }
+    #[test]
+    fn wallet_route_is_xmr_only_and_default_off() {
+        let route = wallet_xmr_route(valid_address()).expect("wallet route");
+        assert_eq!(route.route_kind, WalletMiningRouteKind::WalletXmr);
+        assert!(route.alice_approved_route);
+        assert!(!route.custom_pool_allowed);
+        assert!(!route.ltc_doge_allowed);
+        assert!(!route.ai_jobs_allowed);
+        assert!(!route.mining_execution_allowed);
+        assert!(!route.pool_config_visible);
+        assert_eq!(route.reward_identity, valid_address());
+        assert!(route.worker_identity.starts_with("wallet-"));
     }
 
     #[test]
-    fn local_command_uses_address_only_payout() {
-        let command = build_miner_command(&base_config(MinerProfile::LocalCpu), &base_policy())
-            .expect("local miner command");
-
-        let joined = command.args.join(" ");
-        assert!(joined.contains("--payout-address"));
-        assert!(joined.contains(valid_address()));
-        assert!(joined.contains("--threads 4"));
-        assert!(!joined.contains("mnemonic"));
-        assert!(!joined.contains("private"));
-        assert!(!joined.contains("password"));
-        assert!(!joined.contains("seed"));
+    fn invalid_reward_identity_fails_closed() {
+        assert!(wallet_xmr_route("not-an-address").is_err());
     }
 
     #[test]
-    fn invalid_payout_address_blocks_start() {
-        let mut config = base_config(MinerProfile::LocalCpu);
-        config.payout_address = "not-an-address".to_string();
-
-        assert_eq!(
-            validate_start(&config, &base_policy()),
-            Err(MinerStartBlock::InvalidPayoutAddress)
-        );
+    fn missing_evidence_is_pending_not_confirmed() {
+        let rewards = evaluate_reward_projection(None);
+        assert_eq!(rewards.evidence_status, RewardEvidenceStatus::Pending);
+        assert_eq!(rewards.confirmed_rewards, "0 ALICE");
+        assert_eq!(rewards.released_rewards, "Unavailable");
+        assert_eq!(rewards.accepted_shares, 0);
     }
 
     #[test]
-    fn missing_or_unverified_binary_blocks_start() {
-        let config = base_config(MinerProfile::LocalCpu);
-        let mut policy = base_policy();
-        policy.binary_exists = false;
-        assert_eq!(
-            validate_start(&config, &policy),
-            Err(MinerStartBlock::BinaryMissing)
-        );
-
-        policy.binary_exists = true;
-        policy.binary_verified = false;
-        assert_eq!(
-            validate_start(&config, &policy),
-            Err(MinerStartBlock::BinaryUnverified)
-        );
+    fn stale_evidence_does_not_become_confirmed() {
+        let rewards = evaluate_reward_projection(Some(AcceptedShareEvidence {
+            accepted_shares: 42,
+            rejected_shares: 1,
+            estimated_rewards: "0.70 ALICE".into(),
+            confirmed_rewards: "0.60 ALICE".into(),
+            freshness_seconds: REWARD_EVIDENCE_TTL_SECONDS + 1,
+            daily_window: "2026-05-18".into(),
+            last_updated_at: "2026-05-18T00:00:00Z".into(),
+        }));
+        assert_eq!(rewards.evidence_status, RewardEvidenceStatus::Stale);
+        assert_eq!(rewards.confirmed_rewards, "0 ALICE");
+        assert_eq!(rewards.held_rewards, "Held for fresh evidence");
+        assert_eq!(rewards.accepted_shares, 42);
     }
 
     #[test]
-    fn local_mining_requires_ready_node_when_required() {
-        let config = base_config(MinerProfile::LocalCpu);
-        let mut policy = base_policy();
-
-        policy.node_readiness = NodeMiningReadiness::RequiredDisconnected;
-        assert_eq!(
-            validate_start(&config, &policy),
-            Err(MinerStartBlock::LocalNodeDisconnected)
-        );
-
-        policy.node_readiness = NodeMiningReadiness::RequiredUnsynced;
-        assert_eq!(
-            validate_start(&config, &policy),
-            Err(MinerStartBlock::LocalNodeUnsynced)
-        );
+    fn fresh_evidence_can_display_projection_without_release() {
+        let rewards = evaluate_reward_projection(Some(AcceptedShareEvidence {
+            accepted_shares: 8,
+            rejected_shares: 0,
+            estimated_rewards: "0.15 ALICE".into(),
+            confirmed_rewards: "0.10 ALICE".into(),
+            freshness_seconds: 60,
+            daily_window: "2026-05-18".into(),
+            last_updated_at: "2026-05-18T00:01:00Z".into(),
+        }));
+        assert_eq!(rewards.evidence_status, RewardEvidenceStatus::Fresh);
+        assert_eq!(rewards.estimated_rewards, "0.15 ALICE");
+        assert_eq!(rewards.confirmed_rewards, "0.10 ALICE");
+        assert_eq!(rewards.released_rewards, "Unavailable");
     }
 
     #[test]
-    fn pool_mining_requires_endpoint_and_trust_ack() {
-        let mut config = base_config(MinerProfile::Pool);
-        let mut policy = base_policy();
-        policy.node_readiness = NodeMiningReadiness::NotRequired;
-
-        assert_eq!(
-            validate_start(&config, &policy),
-            Err(MinerStartBlock::MissingPoolEndpoint)
-        );
-
-        config.endpoint = Some("stratum+tcp://pool.example:3333".to_string());
-        assert_eq!(
-            validate_start(&config, &policy),
-            Err(MinerStartBlock::RemoteTrustNotAcknowledged)
-        );
-
-        policy.remote_trust_acknowledged = true;
-        assert_eq!(validate_start(&config, &policy), Ok(()));
-    }
-
-    #[test]
-    fn payout_address_change_is_locked_down() {
-        assert!(!payout_address_change_allowed(false, false));
-        assert!(payout_address_change_allowed(true, false));
-        assert!(payout_address_change_allowed(false, true));
-    }
-
-    #[test]
-    fn unbacked_wallet_blocks_start() {
-        let config = base_config(MinerProfile::LocalCpu);
-        let mut policy = base_policy();
-        policy.wallet_backup_complete = false;
-
-        assert_eq!(
-            validate_start(&config, &policy),
-            Err(MinerStartBlock::WalletBackupRequired)
-        );
-    }
-
-    #[test]
-    fn sensitive_extra_args_are_rejected() {
-        let mut config = base_config(MinerProfile::LocalCpu);
-        config.extra_args = vec!["--seed=0xabc123".to_string()];
-
-        assert_eq!(
-            validate_start(&config, &base_policy()),
-            Err(MinerStartBlock::SensitiveArgument("seed".to_string()))
-        );
-    }
-
-    #[test]
-    fn miner_logs_are_redacted_before_gui_use() {
-        assert_eq!(
-            redact_miner_log_line("starting with wallet-password hunter2"),
-            "[redacted sensitive miner log]"
-        );
-        assert_eq!(redact_miner_log_line("hashrate 42 H/s"), "hashrate 42 H/s");
+    fn execution_flags_remain_false() {
+        assert!(!MINING_EXECUTION_ALLOWED);
+        assert!(!CUSTOM_POOL_ALLOWED);
+        assert!(!LTC_DOGE_ALLOWED);
+        assert!(!AI_JOBS_ALLOWED);
+        assert!(!POOL_CONFIG_VISIBLE);
+        assert!(!PAYOUT_RELEASE_ALLOWED);
+        assert!(!SETTLEMENT_ALLOWED);
+        assert!(!MINT_ALLOWED);
     }
 }

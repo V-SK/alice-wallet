@@ -20,10 +20,12 @@ class Phase40GuiSourceTests(unittest.TestCase):
         self.assertNotIn("pub mod stake", ui_mod)
         self.assertIn("Page::Receive", shell)
         self.assertIn("Page::Send", shell)
+        self.assertIn("Page::Mining", shell)
         self.assertIn("Page::Accounts", shell)
         self.assertIn("Page::AddressBook", shell)
         self.assertIn("pub mod receive", ui_mod)
         self.assertIn("pub mod send", ui_mod)
+        self.assertIn("pub mod mining", ui_mod)
         self.assertIn("pub mod accounts", ui_mod)
         self.assertIn("pub mod address_book", ui_mod)
 
@@ -35,6 +37,7 @@ class Phase40GuiSourceTests(unittest.TestCase):
                 "gui/src/ui/dashboard.rs",
                 "gui/src/ui/receive.rs",
                 "gui/src/ui/send.rs",
+                "gui/src/ui/mining.rs",
                 "gui/src/ui/accounts.rs",
                 "gui/src/ui/address_book.rs",
                 "gui/src/ui/history_view.rs",
@@ -89,6 +92,71 @@ class Phase40GuiSourceTests(unittest.TestCase):
             "command",
         ]:
             self.assertNotIn(forbidden, checked)
+
+    def test_wallet_mining_route_is_xmr_only_and_default_off(self):
+        miner = read("gui/src/miner.rs")
+        shell = read("gui/src/ui/shell.rs")
+        ui_mod = read("gui/src/ui/mod.rs")
+
+        self.assertIn("WalletMiningRouteKind::WalletXmr", miner)
+        self.assertIn("pub const MINING_EXECUTION_ALLOWED: bool = false", miner)
+        self.assertIn("pub const CUSTOM_POOL_ALLOWED: bool = false", miner)
+        self.assertIn("pub const LTC_DOGE_ALLOWED: bool = false", miner)
+        self.assertIn("pub const AI_JOBS_ALLOWED: bool = false", miner)
+        self.assertIn("pub const POOL_CONFIG_VISIBLE: bool = false", miner)
+        self.assertIn("Page::Mining", shell)
+        self.assertIn("pub mod mining", ui_mod)
+        self.assertNotIn("MinerProfile::Pool", miner)
+        self.assertNotIn("build_miner_command", miner)
+        self.assertNotIn("MinerCommand", miner)
+        self.assertNotIn("endpoint", miner)
+        self.assertNotIn("extra_args", miner)
+
+    def test_wallet_mining_ui_hides_pool_and_execution_details(self):
+        checked = "\n".join(
+            read(path)
+            for path in [
+                "gui/src/ui/mining.rs",
+                "gui/src/i18n.rs",
+            ]
+        )
+        for forbidden in [
+            "stratum",
+            "foundation",
+            "api token",
+            "secret_ref",
+            "raw command",
+            "pool endpoint",
+            "wallet_path",
+            "settings.rpc_url",
+        ]:
+            self.assertNotIn(forbidden, checked)
+
+    def test_rewards_display_fail_closed_fields_exist(self):
+        miner = read("gui/src/miner.rs")
+        mining_ui = read("gui/src/ui/mining.rs")
+        i18n = read("gui/src/i18n.rs")
+
+        for field in [
+            "estimated_rewards",
+            "confirmed_rewards",
+            "pending_rewards",
+            "held_rewards",
+            "released_rewards",
+            "accepted_shares",
+            "rejected_shares",
+            "evidence_status",
+            "evidence_freshness_seconds",
+            "daily_window",
+            "last_updated_at",
+        ]:
+            self.assertIn(field, miner)
+            self.assertIn(field, mining_ui)
+
+        self.assertIn("stale_evidence_does_not_become_confirmed", miner)
+        self.assertIn("missing_evidence_is_pending_not_confirmed", miner)
+        self.assertIn("预估奖励约每分钟更新", i18n)
+        self.assertIn("daily after accepted-share evidence", i18n)
 
     def test_history_sanitizes_transaction_identifiers(self):
         history_ui = read("gui/src/ui/history_view.rs")
@@ -152,6 +220,7 @@ class Phase40GuiSourceTests(unittest.TestCase):
                 "gui/src/ui/dashboard.rs",
                 "gui/src/ui/receive.rs",
                 "gui/src/ui/send.rs",
+                "gui/src/ui/mining.rs",
                 "gui/src/ui/accounts.rs",
                 "gui/src/ui/address_book.rs",
                 "gui/src/ui/history_view.rs",
@@ -172,6 +241,8 @@ class Phase40GuiSourceTests(unittest.TestCase):
             "DeFi",
             "approval grant",
             "payout authority",
+            "secret_ref",
+            "hash policy",
         ]
         for term in forbidden:
             self.assertNotIn(term, checked)

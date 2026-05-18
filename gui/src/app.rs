@@ -22,6 +22,7 @@ pub enum Page {
     Dashboard,
     Receive,
     Send,
+    Mining,
     History,
     Accounts,
     AddressBook,
