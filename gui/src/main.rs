@@ -4,6 +4,7 @@ mod config;
 mod crypto;
 mod history;
 mod i18n;
+mod miner;
 mod ui;
 
 use eframe::egui::IconData;

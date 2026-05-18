@@ -1,6 +1,18 @@
 # Alice Wallet
 
-Command-line wallet for Alice Protocol.
+Native desktop and command-line wallet for Alice Protocol.
+
+The current desktop wallet lives in `gui/` and uses Rust `eframe` / `egui`.
+It supports local encrypted wallet creation/import, backup verification, unlock,
+balance refresh, receive QR, send review/signing, transaction history, settings,
+auto-lock, and English / Chinese UI.
+
+The next product lane is the XMR-style wallet upgrade: wallet/node separation,
+honest sync state, complete backup/recovery, receive-request management, and
+one-click mining with address-only payout and RED-first safety tests. See
+[`docs/ALICE_WALLET_XMR_STYLE_UPGRADE_PLAN.md`](docs/ALICE_WALLET_XMR_STYLE_UPGRADE_PLAN.md)
+and
+[`docs/XMR_GUI_REFERENCE_AUDIT.md`](docs/XMR_GUI_REFERENCE_AUDIT.md).
 
 ## Install
 
@@ -10,6 +22,16 @@ cd alice-wallet
 # Requirements: Python 3.8+
 pip install -r requirements.txt
 ```
+
+## Desktop GUI
+
+```bash
+cd gui
+cargo run
+```
+
+Release builds are produced from `.github/workflows/release.yml` for Linux,
+Windows, and macOS arm64.
 
 ## Quick Start
 
