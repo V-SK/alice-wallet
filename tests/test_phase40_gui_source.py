@@ -72,12 +72,11 @@ class Phase40GuiSourceTests(unittest.TestCase):
             self.assertNotIn(forbidden, send_ui)
             self.assertNotIn(forbidden, app)
 
-    def test_receive_account_addressbook_do_not_expose_recovery_material(self):
+    def test_receive_addressbook_do_not_expose_recovery_material(self):
         checked = "\n".join(
             read(path)
             for path in [
                 "gui/src/ui/receive.rs",
-                "gui/src/ui/accounts.rs",
                 "gui/src/ui/address_book.rs",
             ]
         )
@@ -92,6 +91,13 @@ class Phase40GuiSourceTests(unittest.TestCase):
             "command",
         ]:
             self.assertNotIn(forbidden, checked)
+
+        accounts = read("gui/src/ui/accounts.rs")
+        self.assertIn("accounts.private_key_export", accounts)
+        self.assertIn("reveal_private_key_export", accounts)
+        self.assertIn("clear_private_key_export", accounts)
+        self.assertNotIn("wallet_path", accounts)
+        self.assertNotIn("detected_wallet_path", accounts)
 
     def test_wallet_mining_route_is_xmr_only_and_default_off(self):
         miner = read("gui/src/miner.rs")
@@ -173,14 +179,37 @@ class Phase40GuiSourceTests(unittest.TestCase):
         self.assertIn("receive.sync_warning", receive_ui)
         self.assertIn("余额和历史可能仍在更新", i18n)
 
-    def test_raw_seed_import_surface_is_absent_from_gui(self):
+    def test_private_key_import_surface_is_confined_to_auth_import(self):
         import_ui = read("gui/src/ui/import.rs")
         app = read("gui/src/app.rs")
-        self.assertNotIn("SeedHex", import_ui)
-        self.assertNotIn("seed_hex_input", import_ui)
-        self.assertNotIn("ImportSeedHex", import_ui)
-        self.assertNotIn("SeedHex", app)
-        self.assertNotIn("seed_hex_input", app)
+        accounts = read("gui/src/ui/accounts.rs")
+        i18n = read("gui/src/i18n.rs")
+
+        self.assertIn("ImportMethod::PrivateKey", import_ui)
+        self.assertIn("ImportSeedHex", import_ui)
+        self.assertIn("ImportSeedHex", app)
+        self.assertIn("private_key_input", app)
+        self.assertIn("clear_private_key_input", app)
+        self.assertIn("auth.private_key_safety", import_ui)
+        self.assertIn("accounts.private_key_export", accounts)
+        self.assertIn("reveal_private_key_export", accounts)
+        self.assertIn("auth.import_method_private_key", i18n)
+
+        ordinary_ui = "\n".join(
+            read(path)
+            for path in [
+                "gui/src/ui/shell.rs",
+                "gui/src/ui/dashboard.rs",
+                "gui/src/ui/receive.rs",
+                "gui/src/ui/send.rs",
+                "gui/src/ui/mining.rs",
+                "gui/src/ui/address_book.rs",
+                "gui/src/ui/history_view.rs",
+                "gui/src/ui/settings.rs",
+            ]
+        )
+        self.assertNotIn("private_key_input", ordinary_ui)
+        self.assertNotIn("private_key_export", ordinary_ui)
 
     def test_recovery_material_is_confined_to_auth_backup_import_paths(self):
         ordinary_ui = "\n".join(
@@ -191,7 +220,6 @@ class Phase40GuiSourceTests(unittest.TestCase):
                 "gui/src/ui/receive.rs",
                 "gui/src/ui/send.rs",
                 "gui/src/ui/mining.rs",
-                "gui/src/ui/accounts.rs",
                 "gui/src/ui/address_book.rs",
                 "gui/src/ui/history_view.rs",
                 "gui/src/ui/settings.rs",
@@ -211,9 +239,12 @@ class Phase40GuiSourceTests(unittest.TestCase):
 
         backup_ui = read("gui/src/ui/backup.rs")
         app = read("gui/src/app.rs")
+        accounts = read("gui/src/ui/accounts.rs")
         self.assertIn("copy_sensitive", backup_ui)
         self.assertIn("clear_mnemonic_backup", backup_ui)
         self.assertIn("clear_mnemonic_backup", app)
+        self.assertIn("copy_sensitive", accounts)
+        self.assertIn("clear_private_key_export", accounts)
 
     def test_qa_backup_route_does_not_render_placeholder_recovery_words(self):
         app = read("gui/src/app.rs")

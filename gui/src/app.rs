@@ -51,6 +51,12 @@ pub enum Phase {
     Main,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportMethod {
+    Mnemonic,
+    PrivateKey,
+}
+
 #[derive(Debug, Clone)]
 pub struct Toast {
     pub title: String,
@@ -89,6 +95,7 @@ pub enum AsyncAction {
     Unlock(WalletPayload, String),
     Create(String, String),
     Import(String, String, std::path::PathBuf),
+    ImportSeedHex(String, String, std::path::PathBuf),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,6 +144,9 @@ pub struct AliceWalletApp {
     pub password_visible: bool,
     pub confirm_password_input: String,
     pub mnemonic_words: Vec<String>,
+    pub private_key_input: String,
+    pub private_key_export: String,
+    pub import_method: ImportMethod,
     pub mnemonic_backup: String,
     pub auth_error: String,
     pub unlock_fail_count: u32,
@@ -223,6 +233,9 @@ impl AliceWalletApp {
             password_visible: false,
             confirm_password_input: String::new(),
             mnemonic_words: vec![String::new(); 24],
+            private_key_input: String::new(),
+            private_key_export: String::new(),
+            import_method: ImportMethod::Mnemonic,
             mnemonic_backup: String::new(),
             auth_error: String::new(),
             unlock_fail_count: 0,
@@ -309,6 +322,16 @@ impl AliceWalletApp {
         }
 
         if matches!(
+            std::env::var("ALICE_WALLET_QA_IMPORT_METHOD")
+                .unwrap_or_default()
+                .to_ascii_lowercase()
+                .as_str(),
+            "private-key" | "private_key" | "key"
+        ) {
+            self.import_method = ImportMethod::PrivateKey;
+        }
+
+        if matches!(
             std::env::var("ALICE_WALLET_QA_PAGE")
                 .unwrap_or_default()
                 .to_ascii_lowercase()
@@ -375,6 +398,8 @@ impl AliceWalletApp {
         self.pending_profile_reservation = None;
         self.clear_password_inputs();
         self.clear_mnemonic_inputs();
+        self.clear_private_key_input();
+        self.clear_private_key_export();
         self.clear_mnemonic_backup();
         self.auth_error.clear();
         self.phase = Phase::Create;
@@ -385,7 +410,10 @@ impl AliceWalletApp {
         self.pending_profile_reservation = None;
         self.clear_password_inputs();
         self.clear_mnemonic_inputs();
+        self.clear_private_key_input();
+        self.clear_private_key_export();
         self.clear_mnemonic_backup();
+        self.import_method = ImportMethod::Mnemonic;
         self.auth_error.clear();
         self.phase = Phase::Import;
     }
@@ -427,6 +455,8 @@ impl AliceWalletApp {
         self.block_height = None;
         self.clear_password_inputs();
         self.clear_mnemonic_inputs();
+        self.clear_private_key_input();
+        self.clear_private_key_export();
         self.clear_mnemonic_backup();
         self.reset_send_review();
         self.refresh_pending = 0;
@@ -525,6 +555,8 @@ impl AliceWalletApp {
         self.balance = None;
         self.clear_password_inputs();
         self.clear_mnemonic_inputs();
+        self.clear_private_key_input();
+        self.clear_private_key_export();
         self.clear_mnemonic_backup();
         self.auth_error.clear();
         self.refresh_pending = 0;
@@ -595,6 +627,33 @@ impl AliceWalletApp {
             word.clear();
         }
         self.mnemonic_words = vec![String::new(); 24];
+    }
+
+    pub fn clear_private_key_input(&mut self) {
+        self.private_key_input.zeroize();
+        self.private_key_input.clear();
+    }
+
+    pub fn clear_private_key_export(&mut self) {
+        self.private_key_export.zeroize();
+        self.private_key_export.clear();
+    }
+
+    pub fn reveal_private_key_export(&mut self) {
+        self.clear_private_key_export();
+        let Some(secrets) = self.secrets.as_ref() else {
+            self.auth_error = self.t("accounts.export_unavailable").to_string();
+            return;
+        };
+        match secrets.export_private_key_hex() {
+            Some(value) => {
+                self.private_key_export = value;
+                self.auth_error.clear();
+            }
+            None => {
+                self.auth_error = self.t("accounts.export_unavailable").to_string();
+            }
+        }
     }
 
     pub fn clear_mnemonic_backup(&mut self) {
@@ -862,6 +921,48 @@ fn spawn_worker(rt: Arc<Runtime>, rx: Receiver<AsyncAction>, tx: Sender<AsyncRes
                         password.zeroize();
                     });
                 }
+                AsyncAction::ImportSeedHex(mut seed_hex, mut password, target_path) => {
+                    let tx = tx.clone();
+                    std::thread::spawn(move || {
+                        // Safety: backup any existing wallet before overwrite.
+                        let backup_result = crypto::backup_existing_wallet(&target_path);
+                        let backed_up = match backup_result {
+                            Ok(p) => p,
+                            Err(e) => {
+                                let _ = e;
+                                let _ = tx.send(AsyncResult::CreateErr(
+                                    "Could not prepare the existing wallet safely. Try again before importing.".into(),
+                                ));
+                                seed_hex.zeroize();
+                                password.zeroize();
+                                return;
+                            }
+                        };
+                        match crypto::create_wallet_payload_from_seed_hex(&seed_hex, &password) {
+                            Ok(payload) => match crypto::unlock_wallet(&payload, &password) {
+                                Ok(unlocked) => {
+                                    password.zeroize();
+                                    let _ = tx.send(AsyncResult::ImportOk(
+                                        payload,
+                                        unlocked.secrets,
+                                        backed_up,
+                                    ));
+                                }
+                                Err(e) => {
+                                    let _ = tx.send(AsyncResult::CreateErr(e));
+                                }
+                            },
+                            Err(e) => {
+                                let _ = e;
+                                let _ = tx.send(AsyncResult::CreateErr(
+                                    "Private key could not be imported. Check the format and try again.".into(),
+                                ));
+                            }
+                        }
+                        seed_hex.zeroize();
+                        password.zeroize();
+                    });
+                }
                 AsyncAction::RefreshAll(url, address) => {
                     let tx = tx.clone();
                     rt.spawn(async move {
@@ -1099,6 +1200,8 @@ impl AliceWalletApp {
                 self.secrets = Some(secrets.clone());
                 self.clear_password_inputs();
                 self.clear_mnemonic_inputs();
+                self.clear_private_key_input();
+                self.clear_private_key_export();
                 self.clear_mnemonic_backup();
                 match save_result {
                     Ok(_) => {

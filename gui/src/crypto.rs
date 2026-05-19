@@ -89,6 +89,16 @@ impl WalletSecrets {
         };
         Sr25519Keypair::from_secret_key(*seed.expose()).map_err(|e| e.to_string())
     }
+
+    pub fn can_export_private_key(&self) -> bool {
+        self.seed.is_some()
+    }
+
+    pub fn export_private_key_hex(&self) -> Option<String> {
+        self.seed
+            .as_ref()
+            .map(|seed| format!("0x{}", hex::encode(seed.expose())))
+    }
 }
 
 pub struct UnlockOutcome {
@@ -496,6 +506,26 @@ mod tests {
         assert_eq!(payload.kdf, "argon2id");
         assert!(payload.encrypted_mnemonic.is_none());
         assert!(payload.nonce_mnemonic.is_none());
+    }
+
+    #[test]
+    fn imports_and_exports_raw_private_key_without_mnemonic_backup() {
+        let seed_hex = "0x1111111111111111111111111111111111111111111111111111111111111111";
+        let payload =
+            create_wallet_payload_from_seed_hex(seed_hex, "correct horse battery staple").unwrap();
+
+        assert_eq!(payload.version, CURRENT_WALLET_VERSION);
+        assert!(payload.encrypted_mnemonic.is_none());
+        assert!(payload.nonce_mnemonic.is_none());
+
+        let unlocked = unlock_wallet(&payload, "correct horse battery staple").unwrap();
+        assert_eq!(
+            unlocked.secrets.export_private_key_hex().as_deref(),
+            Some(seed_hex)
+        );
+        assert!(WalletSecrets::display_only(payload.address)
+            .export_private_key_hex()
+            .is_none());
     }
 
     #[test]

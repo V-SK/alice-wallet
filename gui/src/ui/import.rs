@@ -1,6 +1,6 @@
 use super::theme::{paint_backdrop, THEME};
 use super::widgets::*;
-use crate::app::{AliceWalletApp, AsyncAction, Phase};
+use crate::app::{AliceWalletApp, AsyncAction, ImportMethod, Phase};
 use eframe::egui::{self, RichText};
 
 pub fn render(ctx: &egui::Context, app: &mut AliceWalletApp) {
@@ -40,7 +40,11 @@ pub fn render(ctx: &egui::Context, app: &mut AliceWalletApp) {
                                     ui.add_space(10.0);
                                 }
 
-                                render_mnemonic_tab(ui, app);
+                                render_import_method_tabs(ui, app);
+                                match app.import_method {
+                                    ImportMethod::Mnemonic => render_mnemonic_tab(ui, app),
+                                    ImportMethod::PrivateKey => render_private_key_tab(ui, app),
+                                }
 
                                 ui.add_space(16.0);
                                 ui.separator();
@@ -181,6 +185,52 @@ fn render_mnemonic_tab(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
         });
 }
 
+fn render_import_method_tabs(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
+    ui.horizontal(|ui| {
+        let mnemonic = app.t("auth.import_method_mnemonic");
+        let private_key = app.t("auth.import_method_private_key");
+        let mnemonic_active = app.import_method == ImportMethod::Mnemonic;
+        let private_key_active = app.import_method == ImportMethod::PrivateKey;
+
+        if secondary_button(ui, mnemonic, true, mnemonic_active).clicked() {
+            app.import_method = ImportMethod::Mnemonic;
+            app.clear_private_key_input();
+            app.auth_error.clear();
+        }
+        if secondary_button(ui, private_key, true, private_key_active).clicked() {
+            app.import_method = ImportMethod::PrivateKey;
+            app.clear_mnemonic_inputs();
+            app.auth_error.clear();
+        }
+    });
+    ui.add_space(14.0);
+}
+
+fn render_private_key_tab(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
+    egui::Frame::NONE
+        .fill(THEME.bg_panel_hi)
+        .corner_radius(10)
+        .inner_margin(egui::Margin::same(12))
+        .stroke(egui::Stroke::new(1.0, THEME.border))
+        .show(ui, |ui| {
+            section_title(ui, app.t("auth.private_key_title"));
+            subtle(ui, app.t("auth.private_key_subtitle"));
+            ui.add_space(10.0);
+            field_label(ui, app.t("auth.private_key_label"));
+            let private_key_hint = app.t("auth.private_key_hint");
+            ui.add(
+                egui::TextEdit::singleline(&mut app.private_key_input)
+                    .password(true)
+                    .desired_width(f32::INFINITY)
+                    .hint_text(private_key_hint)
+                    .background_color(THEME.bg_input)
+                    .margin(egui::vec2(10.0, 8.0)),
+            );
+            ui.add_space(8.0);
+            subtle(ui, app.t("auth.private_key_safety"));
+        });
+}
+
 fn submit_import(app: &mut AliceWalletApp) {
     if app.password_input.len() < 12 {
         app.auth_error = app.t("auth.password_too_short").to_string();
@@ -190,6 +240,14 @@ fn submit_import(app: &mut AliceWalletApp) {
         app.auth_error = app.t("auth.password_mismatch").to_string();
         return;
     }
+
+    match app.import_method {
+        ImportMethod::Mnemonic => submit_mnemonic_import(app),
+        ImportMethod::PrivateKey => submit_private_key_import(app),
+    }
+}
+
+fn submit_mnemonic_import(app: &mut AliceWalletApp) {
     let phrase = app
         .mnemonic_words
         .iter()
@@ -223,6 +281,30 @@ fn submit_import(app: &mut AliceWalletApp) {
         Err(e) => {
             let _ = e;
             app.auth_error = app.t("auth.invalid_mnemonic").to_string();
+        }
+    }
+}
+
+fn submit_private_key_import(app: &mut AliceWalletApp) {
+    let seed_hex = app.private_key_input.trim().to_string();
+    let stripped = seed_hex.trim_start_matches("0x").trim_start_matches("0X");
+    if stripped.len() != 64 || !stripped.chars().all(|c| c.is_ascii_hexdigit()) {
+        app.auth_error = app.t("auth.invalid_private_key").to_string();
+        return;
+    }
+
+    match app.begin_profile_import() {
+        Ok(target) => {
+            app.auth_busy = true;
+            app.auth_error.clear();
+            let _ = app.tx.send(AsyncAction::ImportSeedHex(
+                seed_hex,
+                app.password_input.clone(),
+                target,
+            ));
+        }
+        Err(e) => {
+            app.auth_error = e;
         }
     }
 }

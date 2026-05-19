@@ -25,12 +25,25 @@ class Phase40SWalletProfileSourceTests(unittest.TestCase):
     def test_create_import_and_switching_fail_closed_behaviors_are_tested(self):
         profiles = read("gui/src/wallet_profiles.rs")
         app = read("gui/src/app.rs")
+        import_ui = read("gui/src/ui/import.rs")
+        accounts = read("gui/src/ui/accounts.rs")
+        crypto = read("gui/src/crypto.rs")
 
         self.assertIn("duplicate_profile_registration_is_rejected", profiles)
         self.assertIn("import_reservation_uses_unique_profile_storage", profiles)
         self.assertIn("switching_active_profile_clears_in_memory_secrets", app)
         self.assertIn("select_wallet_profile", app)
         self.assertIn("clear_active_wallet_secret_state", app)
+        self.assertIn("ImportMethod::Mnemonic", import_ui)
+        self.assertIn("ImportMethod::PrivateKey", import_ui)
+        self.assertIn("ALICE_WALLET_QA_IMPORT_METHOD", app)
+        self.assertIn("create_wallet_payload_from_seed_hex", crypto)
+        self.assertIn("ImportSeedHex", app)
+        self.assertIn("private_key_input", app)
+        self.assertIn("clear_private_key_input", app)
+        self.assertIn("accounts.private_key_export", accounts)
+        self.assertIn("export_private_key_hex", crypto)
+        self.assertIn("clear_private_key_export", app)
 
     def test_signing_and_label_metadata_boundaries_are_present(self):
         profiles = read("gui/src/wallet_profiles.rs")

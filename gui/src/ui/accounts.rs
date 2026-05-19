@@ -68,6 +68,59 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
     }
 
     card(ui, |ui| {
+        section_title(ui, app.t("accounts.private_key_export"));
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new(app.t("accounts.private_key_export_note"))
+                .size(12.0)
+                .color(THEME.text_mid),
+        );
+        ui.add_space(12.0);
+        if wallet.can_export_private_key() {
+            if app.private_key_export.is_empty() {
+                if secondary_button(ui, app.t("accounts.reveal_private_key"), true, true).clicked()
+                {
+                    app.reveal_private_key_export();
+                }
+            } else {
+                egui::Frame::NONE
+                    .fill(THEME.bg_input)
+                    .corner_radius(10)
+                    .inner_margin(egui::Margin::symmetric(12, 10))
+                    .stroke(Stroke::new(1.0, THEME.border_accent))
+                    .show(ui, |ui| {
+                        ui.label(
+                            RichText::new(&app.private_key_export)
+                                .size(12.0)
+                                .family(egui::FontFamily::Monospace)
+                                .color(THEME.text_hi),
+                        );
+                    });
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    if secondary_button(ui, app.t("accounts.copy_private_key"), true, false)
+                        .clicked()
+                    {
+                        let value = app.private_key_export.clone();
+                        app.copy_sensitive(ui.ctx(), &value);
+                    }
+                    if ghost_button(ui, app.t("accounts.hide_private_key")).clicked() {
+                        app.clear_private_key_export();
+                    }
+                });
+            }
+        } else {
+            ui.label(
+                RichText::new(app.t("accounts.export_unavailable"))
+                    .size(12.0)
+                    .color(THEME.text_mid),
+            );
+        }
+    });
+
+    ui.add_space(14.0);
+
+    card(ui, |ui| {
         section_title(ui, app.t("accounts.management"));
         account_row(
             ui,
