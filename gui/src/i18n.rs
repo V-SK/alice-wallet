@@ -192,6 +192,10 @@ fn en(key: &str) -> &'static str {
         "accounts.current" => "Current account",
         "accounts.primary_label" => "Main account",
         "accounts.address" => "Address",
+        "accounts.profiles" => "Local wallet profiles",
+        "accounts.active" => "Active",
+        "accounts.switch" => "Switch",
+        "accounts.profile_safety_note" => "Only labels, access state, and display addresses are shown here. Local wallet paths and recovery details stay hidden.",
         "accounts.management" => "Address management",
         "accounts.default_address" => "Default receiving address",
         "accounts.enabled" => "Enabled",
@@ -508,6 +512,12 @@ fn zh(key: &str) -> &'static str {
         "accounts.current" => "当前账户",
         "accounts.primary_label" => "主账户",
         "accounts.address" => "地址",
+        "accounts.profiles" => "本地钱包档案",
+        "accounts.active" => "当前",
+        "accounts.switch" => "切换",
+        "accounts.profile_safety_note" => {
+            "这里只显示标签、访问状态和展示地址。本地钱包路径和恢复信息保持隐藏。"
+        }
         "accounts.management" => "地址管理",
         "accounts.default_address" => "默认收款地址",
         "accounts.enabled" => "已启用",

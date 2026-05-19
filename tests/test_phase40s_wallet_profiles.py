@@ -95,11 +95,16 @@ class Phase40SWalletProfileSourceTests(unittest.TestCase):
     def test_qa_mock_mode_has_two_display_only_profiles_without_loading_settings(self):
         profiles = read("gui/src/wallet_profiles.rs")
         app = read("gui/src/app.rs")
+        accounts = read("gui/src/ui/accounts.rs")
 
         self.assertIn("qa_mock_profiles", profiles)
         self.assertIn("QA mock warm wallet", profiles)
         self.assertIn("QA mock cold wallet", profiles)
         self.assertIn("qa_mock_mode_exposes_two_display_only_profiles", app)
+        self.assertIn("profile_row", accounts)
+        self.assertIn("safe_profiles", accounts)
+        self.assertIn("select_wallet_profile", accounts)
+        self.assertIn("accounts.profile_safety_note", accounts)
         self.assertIn("Settings::default()", app)
         qa_branch = app.split("let settings = if qa_mock_mode", 1)[1].split("} else {", 1)[0]
         self.assertIn("Settings::default()", qa_branch)

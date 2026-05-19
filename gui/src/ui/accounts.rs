@@ -47,6 +47,26 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
 
     ui.add_space(14.0);
 
+    let profiles = app.profile_manager.safe_profiles();
+    if !profiles.is_empty() {
+        card(ui, |ui| {
+            section_title(ui, app.t("accounts.profiles"));
+            ui.add_space(8.0);
+            let active_id = app.active_profile_id();
+            for profile in profiles {
+                let is_active = active_id.as_deref() == Some(profile.profile_id.as_str());
+                profile_row(ui, app, &profile, is_active);
+                ui.add_space(8.0);
+            }
+            ui.label(
+                RichText::new(app.t("accounts.profile_safety_note"))
+                    .size(12.0)
+                    .color(THEME.text_mid),
+            );
+        });
+        ui.add_space(14.0);
+    }
+
     card(ui, |ui| {
         section_title(ui, app.t("accounts.management"));
         account_row(
@@ -71,6 +91,61 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
     });
 }
 
+fn profile_row(
+    ui: &mut egui::Ui,
+    app: &mut AliceWalletApp,
+    profile: &crate::wallet_profiles::WalletProfileMetadata,
+    is_active: bool,
+) {
+    egui::Frame::NONE
+        .fill(THEME.bg_panel_hi)
+        .corner_radius(10)
+        .inner_margin(egui::Margin::symmetric(12, 9))
+        .stroke(Stroke::new(
+            1.0,
+            if is_active {
+                THEME.border_accent
+            } else {
+                THEME.border
+            },
+        ))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(
+                        RichText::new(&profile.label)
+                            .size(13.0)
+                            .strong()
+                            .color(THEME.text_hi),
+                    );
+                    ui.add_space(3.0);
+                    ui.label(
+                        RichText::new(format!(
+                            "{} · {}",
+                            shortened_address(&profile.address),
+                            profile_access_label(Some(profile))
+                        ))
+                        .size(11.0)
+                        .color(THEME.text_dim),
+                    );
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if is_active {
+                        ui.label(
+                            RichText::new(app.t("accounts.active"))
+                                .size(12.0)
+                                .strong()
+                                .color(THEME.primary),
+                        );
+                    } else if secondary_button(ui, app.t("accounts.switch"), true, false).clicked()
+                    {
+                        app.select_wallet_profile(&profile.profile_id);
+                    }
+                });
+            });
+        });
+}
+
 fn profile_access_label(profile: Option<&crate::wallet_profiles::WalletProfileMetadata>) -> String {
     match profile.map(|profile| profile.access) {
         Some(crate::wallet_profiles::WalletProfileAccess::ReadOnly) => "Read-only".to_string(),
@@ -79,6 +154,22 @@ fn profile_access_label(profile: Option<&crate::wallet_profiles::WalletProfileMe
         }
         _ => "Enabled".to_string(),
     }
+}
+
+fn shortened_address(address: &str) -> String {
+    if address.chars().count() <= 18 {
+        return address.to_string();
+    }
+    let head: String = address.chars().take(8).collect();
+    let tail: String = address
+        .chars()
+        .rev()
+        .take(6)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+    format!("{}…{}", head, tail)
 }
 
 fn account_row(ui: &mut egui::Ui, label: &str, value: &str) {
