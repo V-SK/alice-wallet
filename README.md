@@ -52,6 +52,21 @@ ALICE_WALLET_QA_MOCK=1 "/Volumes/Z Slim/AliceWork/phase40r/AliceWalletQA.app/Con
 The QA bundle includes `assets/macos/AliceWallet.icns` for the macOS app icon.
 It is not a signed, notarized, or release-ready package.
 
+## Phase40U Release Ops Readiness
+
+Phase40U adds descriptor-only release-ops packets for owner review. The helper
+builds an unsigned, unpublished release manifest candidate plus HF distribution,
+Storage Box archive, website download metadata, and leak-audit handoff files.
+It does not sign, notarize, upload, execute an updater, mutate HF or
+`/mnt/storage`, edit the website repo, or enable public distribution.
+
+```bash
+python3 release_ops.py \
+  --out-dir "/Volumes/Z Slim/AliceWork/phase40u" \
+  --source-commit "$(git rev-parse HEAD)" \
+  --app-version "0.1.0"
+```
+
 ## Quick Start
 
 ```bash
