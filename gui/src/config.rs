@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 pub const DEFAULT_RPC_URL: &str = "wss://rpc.aliceprotocol.org";
 pub const DEFAULT_AUTO_LOCK_MINUTES: u32 = 10;
+pub const DATA_ROOT_ENV: &str = "ALICE_WALLET_DATA_ROOT";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -46,10 +47,29 @@ impl Default for Settings {
 }
 
 pub fn config_path() -> PathBuf {
+    wallet_data_root().join("config.json")
+}
+
+pub fn wallet_data_root() -> PathBuf {
+    if let Some(root) = wallet_data_root_override() {
+        return root;
+    }
+
     dirs::data_local_dir()
         .unwrap_or_else(|| dirs::home_dir().expect("home dir").join(".alice"))
         .join("AliceWallet")
-        .join("config.json")
+}
+
+pub fn wallet_data_root_is_overridden() -> bool {
+    wallet_data_root_override().is_some()
+}
+
+fn wallet_data_root_override() -> Option<PathBuf> {
+    std::env::var(DATA_ROOT_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
 }
 
 impl Settings {

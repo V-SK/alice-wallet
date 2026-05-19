@@ -9,28 +9,28 @@ pub fn render(ctx: &egui::Context, app: &mut AliceWalletApp) {
     ctx.input(|i| {
         if i.modifiers.command {
             if i.key_pressed(egui::Key::Num1) {
-                app.page = Page::Dashboard;
+                app.set_page(Page::Dashboard);
             }
             if i.key_pressed(egui::Key::Num2) {
-                app.page = Page::Receive;
+                app.set_page(Page::Receive);
             }
             if i.key_pressed(egui::Key::Num3) {
-                app.page = Page::Send;
+                app.set_page(Page::Send);
             }
             if i.key_pressed(egui::Key::Num4) {
-                app.page = Page::Mining;
+                app.set_page(Page::Mining);
             }
             if i.key_pressed(egui::Key::Num5) {
-                app.page = Page::History;
+                app.set_page(Page::History);
             }
             if i.key_pressed(egui::Key::Num6) {
-                app.page = Page::Accounts;
+                app.set_page(Page::Accounts);
             }
             if i.key_pressed(egui::Key::Num7) {
-                app.page = Page::AddressBook;
+                app.set_page(Page::AddressBook);
             }
             if i.key_pressed(egui::Key::Num8) {
-                app.page = Page::Settings;
+                app.set_page(Page::Settings);
             }
         }
     });
@@ -288,7 +288,7 @@ fn nav_item(ui: &mut egui::Ui, app: &mut AliceWalletApp, page: Page, icon: &str,
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     if resp.clicked() {
-        app.page = page;
+        app.set_page(page);
     }
     ui.add_space(4.0);
 }

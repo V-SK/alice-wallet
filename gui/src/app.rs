@@ -9,6 +9,7 @@ use crate::wallet_profiles::{
     WalletProfileMetadata, WalletProfileReservation, LEGACY_PROFILE_ID,
 };
 use eframe::egui;
+use rand::RngCore;
 use std::sync::{
     mpsc::{channel, Receiver, Sender},
     Arc,
@@ -122,6 +123,8 @@ pub enum AsyncResult {
 pub struct AliceWalletApp {
     pub rt: Arc<Runtime>,
     pub qa_mock_mode: bool,
+    pub network_disabled: bool,
+    pub evidence_redact_secrets: bool,
 
     pub phase: Phase,
     pub page: Page,
@@ -146,6 +149,8 @@ pub struct AliceWalletApp {
     pub mnemonic_words: Vec<String>,
     pub private_key_input: String,
     pub private_key_export: String,
+    pub private_key_export_password: String,
+    pub private_key_export_password_visible: bool,
     pub import_method: ImportMethod,
     pub mnemonic_backup: String,
     pub auth_error: String,
@@ -191,9 +196,11 @@ pub struct AliceWalletApp {
 
 impl AliceWalletApp {
     pub fn new(rt: Runtime) -> Self {
-        let qa_mock_mode = std::env::var("ALICE_WALLET_QA_MOCK")
-            .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
-            .unwrap_or(false);
+        let qa_mock_mode = env_flag("ALICE_WALLET_QA_MOCK");
+        let network_disabled = env_flag("ALICE_WALLET_NETWORK_DISABLED");
+        let evidence_redact_secrets = env_flag("ALICE_WALLET_EVIDENCE_REDACT_SECRETS");
+        let phase40t_evidence_mode =
+            !qa_mock_mode && std::env::var_os("ALICE_WALLET_PHASE40T_EVIDENCE_PAGE").is_some();
         let default_wallet_path = if qa_mock_mode {
             std::path::PathBuf::from("qa-display-only-no-wallet-file")
         } else {
@@ -218,6 +225,8 @@ impl AliceWalletApp {
         let mut app = Self {
             rt,
             qa_mock_mode,
+            network_disabled,
+            evidence_redact_secrets,
             phase: Phase::CheckWallet,
             page: Page::Dashboard,
             default_wallet_path: default_wallet_path.clone(),
@@ -235,6 +244,8 @@ impl AliceWalletApp {
             mnemonic_words: vec![String::new(); 24],
             private_key_input: String::new(),
             private_key_export: String::new(),
+            private_key_export_password: String::new(),
+            private_key_export_password_visible: false,
             import_method: ImportMethod::Mnemonic,
             mnemonic_backup: String::new(),
             auth_error: String::new(),
@@ -274,6 +285,9 @@ impl AliceWalletApp {
             app.enable_qa_mock_mode();
         } else {
             app.check_wallet();
+            if phase40t_evidence_mode {
+                app.enable_phase40t_evidence_mode();
+            }
         }
         app
     }
@@ -347,6 +361,126 @@ impl AliceWalletApp {
         }
     }
 
+    fn enable_phase40t_evidence_mode(&mut self) {
+        if self.qa_mock_mode
+            || !self.network_disabled
+            || !self.evidence_redact_secrets
+            || !crate::config::wallet_data_root_is_overridden()
+        {
+            self.connection_status = ConnectionState::Error;
+            self.node_sync = NodeSyncSnapshot::unavailable(
+                "phase40t_evidence_requires_isolated_redacted_network_disabled",
+            );
+            self.sync_error =
+                Some("phase40t_evidence_requires_isolated_redacted_network_disabled".to_string());
+            return;
+        }
+
+        let mut seed = [0u8; 32];
+        let mut pass_bytes = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut seed);
+        rand::thread_rng().fill_bytes(&mut pass_bytes);
+        let mut seed_hex = hex::encode(seed);
+        let mut password = hex::encode(pass_bytes);
+        seed.zeroize();
+        pass_bytes.zeroize();
+
+        let result =
+            crypto::create_wallet_payload_from_seed_hex(&seed_hex, &password).and_then(|payload| {
+                let unlocked = crypto::unlock_wallet(&payload, &password)?;
+                Ok((payload, unlocked.secrets))
+            });
+        seed_hex.zeroize();
+        password.zeroize();
+
+        let Ok((payload, secrets)) = result else {
+            self.connection_status = ConnectionState::Error;
+            self.node_sync = NodeSyncSnapshot::unavailable("phase40t_evidence_wallet_unavailable");
+            self.sync_error = Some("phase40t_evidence_wallet_unavailable".to_string());
+            return;
+        };
+
+        let profile_id = "phase40t-owner-test-evidence".to_string();
+        let address = payload.address.clone();
+        if self.profile_manager.profile(&profile_id).is_none() {
+            let _ = self.profile_manager.register_profile(
+                profile_id.clone(),
+                "Owner test evidence wallet".to_string(),
+                address.clone(),
+                WalletProfileAccess::Normal,
+            );
+        } else {
+            let _ = self.profile_manager.set_active_profile(&profile_id);
+        }
+        let contact_address = crypto::qa_display_address_variant(0x40);
+        let _ = self.profile_manager.add_address_book_record(
+            &profile_id,
+            "Owner test local contact",
+            &contact_address,
+            "Local metadata only",
+        );
+        let _ = self.profile_manager.add_receive_request(
+            &profile_id,
+            "Owner test receive request",
+            &address,
+            Some("0 ALICE".to_string()),
+        );
+
+        self.payload = Some(payload);
+        self.secrets = Some(secrets);
+        self.balance = None;
+        self.block_height = None;
+        self.node_sync = NodeSyncSnapshot::unavailable("owner_test_network_disabled");
+        self.sync_error = Some("owner_test_network_disabled".to_string());
+        self.connection_status = ConnectionState::Error;
+        self.refresh_pending = 0;
+        self.clear_password_inputs();
+        self.clear_mnemonic_inputs();
+        self.clear_private_key_input();
+        self.clear_private_key_export();
+        self.clear_private_key_export_password();
+
+        match std::env::var("ALICE_WALLET_PHASE40T_EVIDENCE_PAGE")
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "profiles" | "wallet-choice" | "wallet_choice" => {
+                self.phase = Phase::WalletChoice;
+                self.secrets = None;
+            }
+            "create" => {
+                self.phase = Phase::Create;
+                self.payload = None;
+                self.secrets = None;
+            }
+            "unlock" => {
+                self.phase = Phase::Unlock;
+                self.secrets = None;
+            }
+            "import" | "import-mnemonic" | "import_mnemonic" => {
+                self.phase = Phase::Import;
+                self.import_method = ImportMethod::Mnemonic;
+                self.payload = None;
+                self.secrets = None;
+            }
+            "import-private-key" | "import_private_key" => {
+                self.phase = Phase::Import;
+                self.import_method = ImportMethod::PrivateKey;
+                self.payload = None;
+                self.secrets = None;
+            }
+            "backup" => {
+                self.phase = Phase::Backup;
+                self.mnemonic_backup = "phase40t evidence redacted".to_string();
+            }
+            _ => {
+                self.phase = Phase::Main;
+                self.page = phase40t_evidence_page_from_env();
+            }
+        }
+    }
+
     fn check_wallet(&mut self) {
         if !self.profile_manager.safe_profiles().is_empty() {
             self.phase = Phase::WalletChoice;
@@ -400,6 +534,7 @@ impl AliceWalletApp {
         self.clear_mnemonic_inputs();
         self.clear_private_key_input();
         self.clear_private_key_export();
+        self.clear_private_key_export_password();
         self.clear_mnemonic_backup();
         self.auth_error.clear();
         self.phase = Phase::Create;
@@ -412,6 +547,7 @@ impl AliceWalletApp {
         self.clear_mnemonic_inputs();
         self.clear_private_key_input();
         self.clear_private_key_export();
+        self.clear_private_key_export_password();
         self.clear_mnemonic_backup();
         self.import_method = ImportMethod::Mnemonic;
         self.auth_error.clear();
@@ -457,9 +593,18 @@ impl AliceWalletApp {
         self.clear_mnemonic_inputs();
         self.clear_private_key_input();
         self.clear_private_key_export();
+        self.clear_private_key_export_password();
         self.clear_mnemonic_backup();
         self.reset_send_review();
         self.refresh_pending = 0;
+    }
+
+    pub fn set_page(&mut self, page: Page) {
+        if self.page == Page::Accounts && page != Page::Accounts {
+            self.clear_private_key_export();
+            self.clear_private_key_export_password();
+        }
+        self.page = page;
     }
 
     pub fn select_wallet_profile(&mut self, profile_id: &str) {
@@ -557,6 +702,7 @@ impl AliceWalletApp {
         self.clear_mnemonic_inputs();
         self.clear_private_key_input();
         self.clear_private_key_export();
+        self.clear_private_key_export_password();
         self.clear_mnemonic_backup();
         self.auth_error.clear();
         self.refresh_pending = 0;
@@ -601,6 +747,16 @@ impl AliceWalletApp {
             self.refresh_pending = 0;
             return;
         }
+        if self.network_disabled {
+            let _ = address;
+            self.balance = None;
+            self.block_height = None;
+            self.node_sync = NodeSyncSnapshot::unavailable("owner_test_network_disabled");
+            self.connection_status = ConnectionState::Error;
+            self.sync_error = Some("owner_test_network_disabled".to_string());
+            self.refresh_pending = 0;
+            return;
+        }
         self.refresh_pending += 1;
         self.sync_error = None;
         let _ = self.tx.send(AsyncAction::RefreshAll(
@@ -639,21 +795,40 @@ impl AliceWalletApp {
         self.private_key_export.clear();
     }
 
+    pub fn clear_private_key_export_password(&mut self) {
+        self.private_key_export_password.zeroize();
+        self.private_key_export_password.clear();
+        self.private_key_export_password_visible = false;
+    }
+
     pub fn reveal_private_key_export(&mut self) {
         self.clear_private_key_export();
-        let Some(secrets) = self.secrets.as_ref() else {
+        let Some(payload) = self.payload.as_ref() else {
             self.auth_error = self.t("accounts.export_unavailable").to_string();
             return;
         };
-        match secrets.export_private_key_hex() {
-            Some(value) => {
-                self.private_key_export = value;
+
+        let mut password = std::mem::take(&mut self.private_key_export_password);
+        self.private_key_export_password_visible = false;
+        if password.trim().is_empty() {
+            password.zeroize();
+            self.auth_error = self.t("accounts.export_reauth_required").to_string();
+            return;
+        }
+
+        match crypto::unlock_wallet(payload, &password) {
+            Ok(unlocked) => {
+                self.private_key_export = unlocked
+                    .secrets
+                    .export_private_key_hex()
+                    .unwrap_or_default();
                 self.auth_error.clear();
             }
-            None => {
+            Err(_) => {
                 self.auth_error = self.t("accounts.export_unavailable").to_string();
             }
         }
+        password.zeroize();
     }
 
     pub fn clear_mnemonic_backup(&mut self) {
@@ -730,12 +905,50 @@ fn qa_page_from_env() -> Page {
     }
 }
 
+fn phase40t_evidence_page_from_env() -> Page {
+    match std::env::var("ALICE_WALLET_PHASE40T_EVIDENCE_PAGE")
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "receive" => Page::Receive,
+        "send" => Page::Send,
+        "mining" => Page::Mining,
+        "history" => Page::History,
+        "accounts" => Page::Accounts,
+        "address-book" | "address_book" => Page::AddressBook,
+        "settings" => Page::Settings,
+        _ => Page::Dashboard,
+    }
+}
+
+fn env_flag(name: &str) -> bool {
+    std::env::var(name)
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::RngCore;
     use std::sync::Mutex;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn phase40t_temp_root(label: &str) -> std::path::PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "alice-wallet-phase40t-{}-{}-{}",
+            label,
+            std::process::id(),
+            stamp
+        ))
+    }
 
     #[test]
     fn qa_mock_mode_uses_display_only_wallet_and_skips_network_refresh() {
@@ -792,6 +1005,188 @@ mod tests {
         std::env::remove_var("ALICE_WALLET_QA_MOCK");
         std::env::remove_var("ALICE_WALLET_QA_PAGE");
         std::env::remove_var("ALICE_WALLET_QA_PHASE");
+    }
+
+    #[test]
+    fn owner_test_data_root_launches_without_qa_mock_and_stays_isolated() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let root = phase40t_temp_root("data-root");
+        std::env::remove_var("ALICE_WALLET_QA_MOCK");
+        std::env::set_var("ALICE_WALLET_DATA_ROOT", &root);
+        std::env::set_var("ALICE_WALLET_NETWORK_DISABLED", "1");
+
+        let rt = Runtime::new().expect("runtime");
+        let app = AliceWalletApp::new(rt);
+
+        std::env::remove_var("ALICE_WALLET_DATA_ROOT");
+        std::env::remove_var("ALICE_WALLET_NETWORK_DISABLED");
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert!(!app.qa_mock_mode);
+        assert!(app.network_disabled);
+        assert_eq!(app.wallet_path, root.join("wallet.json"));
+        assert_eq!(app.default_wallet_path, root.join("wallet.json"));
+        assert_eq!(app.phase, Phase::Create);
+    }
+
+    #[test]
+    fn owner_test_network_disabled_fails_closed_without_rpc_refresh() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let root = phase40t_temp_root("network-disabled");
+        std::env::remove_var("ALICE_WALLET_QA_MOCK");
+        std::env::set_var("ALICE_WALLET_DATA_ROOT", &root);
+        std::env::set_var("ALICE_WALLET_NETWORK_DISABLED", "1");
+
+        let rt = Runtime::new().expect("runtime");
+        let mut app = AliceWalletApp::new(rt);
+        app.start_refresh("owner-test-address");
+
+        std::env::remove_var("ALICE_WALLET_DATA_ROOT");
+        std::env::remove_var("ALICE_WALLET_NETWORK_DISABLED");
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(app.refresh_pending, 0);
+        assert!(matches!(app.connection_status, ConnectionState::Error));
+        assert_eq!(
+            app.node_sync.fail_closed_reason.as_deref(),
+            Some("owner_test_network_disabled")
+        );
+    }
+
+    #[test]
+    fn phase40t_evidence_mode_is_no_mock_isolated_redacted_and_fail_closed() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let root = phase40t_temp_root("evidence-mode");
+        std::env::remove_var("ALICE_WALLET_QA_MOCK");
+        std::env::set_var("ALICE_WALLET_DATA_ROOT", &root);
+        std::env::set_var("ALICE_WALLET_NETWORK_DISABLED", "1");
+        std::env::set_var("ALICE_WALLET_EVIDENCE_REDACT_SECRETS", "1");
+        std::env::set_var("ALICE_WALLET_PHASE40T_EVIDENCE_PAGE", "accounts");
+
+        let rt = Runtime::new().expect("runtime");
+        let app = AliceWalletApp::new(rt);
+
+        std::env::remove_var("ALICE_WALLET_DATA_ROOT");
+        std::env::remove_var("ALICE_WALLET_NETWORK_DISABLED");
+        std::env::remove_var("ALICE_WALLET_EVIDENCE_REDACT_SECRETS");
+        std::env::remove_var("ALICE_WALLET_PHASE40T_EVIDENCE_PAGE");
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert!(!app.qa_mock_mode);
+        assert!(app.network_disabled);
+        assert!(app.evidence_redact_secrets);
+        assert_eq!(app.phase, Phase::Main);
+        assert_eq!(app.page, Page::Accounts);
+        assert!(app.payload.is_some());
+        assert!(app
+            .secrets
+            .as_ref()
+            .is_some_and(|wallet| wallet.can_export_private_key()));
+        assert_eq!(
+            app.node_sync.fail_closed_reason.as_deref(),
+            Some("owner_test_network_disabled")
+        );
+        assert!(matches!(app.connection_status, ConnectionState::Error));
+    }
+
+    #[test]
+    fn private_key_export_reauth_derives_from_payload_and_clears_on_page_leave() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let root = phase40t_temp_root("private-key-export");
+        std::env::remove_var("ALICE_WALLET_QA_MOCK");
+        std::env::set_var("ALICE_WALLET_DATA_ROOT", &root);
+        std::env::set_var("ALICE_WALLET_NETWORK_DISABLED", "1");
+
+        let rt = Runtime::new().expect("runtime");
+        let mut app = AliceWalletApp::new(rt);
+        let mut seed = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut seed);
+        let mut seed_hex = hex::encode(seed);
+        let password = format!("phase40t-{}-{}", std::process::id(), root.display());
+        let payload =
+            crypto::create_wallet_payload_from_seed_hex(&seed_hex, &password).expect("payload");
+        seed.zeroize();
+        seed_hex.zeroize();
+
+        app.payload = Some(payload);
+        app.page = Page::Accounts;
+        app.private_key_export_password = password;
+        app.reveal_private_key_export();
+
+        assert!(app.private_key_export.starts_with("0x"));
+        assert!(app.private_key_export_password.is_empty());
+
+        app.set_page(Page::Dashboard);
+        assert!(app.private_key_export.is_empty());
+        assert!(app.private_key_export_password.is_empty());
+
+        std::env::remove_var("ALICE_WALLET_DATA_ROOT");
+        std::env::remove_var("ALICE_WALLET_NETWORK_DISABLED");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn phase40t_materializes_owner_test_profiles_when_requested() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let Some(root) = std::env::var_os("ALICE_WALLET_PHASE40T_MATERIALIZE_ROOT")
+            .map(std::path::PathBuf::from)
+        else {
+            return;
+        };
+
+        let mut manager = WalletProfileManager::new(root.clone());
+        let mut profile_ids = Vec::new();
+        let mut addresses = Vec::new();
+        for label in ["Owner test primary", "Owner test imported"] {
+            let reservation = manager
+                .reserve_new_profile(label, WalletProfileAccess::Normal)
+                .expect("reserve profile");
+            let mut seed = [0u8; 32];
+            let mut pass_bytes = [0u8; 32];
+            rand::thread_rng().fill_bytes(&mut seed);
+            rand::thread_rng().fill_bytes(&mut pass_bytes);
+            let mut seed_hex = hex::encode(seed);
+            let mut password = hex::encode(pass_bytes);
+            seed.zeroize();
+            pass_bytes.zeroize();
+            let payload =
+                crypto::create_wallet_payload_from_seed_hex(&seed_hex, &password).expect("payload");
+            seed_hex.zeroize();
+            password.zeroize();
+            crypto::write_wallet_payload(&reservation.wallet_path, &payload)
+                .expect("write payload");
+            let profile_id = reservation.profile_id.clone();
+            let address = payload.address.clone();
+            manager
+                .finalize_reserved_profile(reservation, address.clone())
+                .expect("finalize profile");
+            profile_ids.push(profile_id);
+            addresses.push(address);
+        }
+
+        if profile_ids.len() == 2 && addresses.len() == 2 {
+            manager
+                .add_address_book_record(
+                    &profile_ids[0],
+                    "Owner test local contact",
+                    &addresses[1],
+                    "local metadata only",
+                )
+                .expect("address book");
+            manager
+                .add_receive_request(
+                    &profile_ids[0],
+                    "Owner test receive request",
+                    &addresses[0],
+                    Some("0 ALICE".to_string()),
+                )
+                .expect("receive request");
+            manager
+                .set_active_profile(&profile_ids[0])
+                .expect("active profile");
+        }
+
+        manager.save().expect("save profile metadata");
     }
 
     #[test]
@@ -1061,6 +1456,7 @@ impl eframe::App for AliceWalletApp {
         // Auto-refresh balance + stake every 30s on Main phase
         if self.phase == Phase::Main
             && !self.qa_mock_mode
+            && !self.network_disabled
             && self.secrets.is_some()
             && self.refresh_pending == 0
         {
@@ -1082,7 +1478,7 @@ impl eframe::App for AliceWalletApp {
         }
 
         // Background block poll when on main phase
-        if self.phase == Phase::Main && !self.qa_mock_mode {
+        if self.phase == Phase::Main && !self.qa_mock_mode && !self.network_disabled {
             let needs_poll = self
                 .last_block_poll
                 .map(|t| t.elapsed() > Duration::from_secs(8))
@@ -1202,6 +1598,7 @@ impl AliceWalletApp {
                 self.clear_mnemonic_inputs();
                 self.clear_private_key_input();
                 self.clear_private_key_export();
+                self.clear_private_key_export_password();
                 self.clear_mnemonic_backup();
                 match save_result {
                     Ok(_) => {

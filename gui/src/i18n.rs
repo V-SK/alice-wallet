@@ -198,6 +198,10 @@ fn en(key: &str) -> &'static str {
         "accounts.profile_safety_note" => "Only labels, access state, and display addresses are shown here. Local wallet paths and recovery details stay hidden.",
         "accounts.private_key_export" => "Private key export",
         "accounts.private_key_export_note" => "Export only when you are offline and ready to store it securely. This value controls the wallet.",
+        "accounts.export_reauth_label" => "Re-enter wallet password",
+        "accounts.export_reauth_placeholder" => "Wallet password",
+        "accounts.export_reauth_hint" => "The key is derived from the encrypted wallet again and is cleared when you leave this view.",
+        "accounts.export_reauth_required" => "Re-enter the wallet password before revealing the private key.",
         "accounts.reveal_private_key" => "Reveal private key",
         "accounts.hide_private_key" => "Hide private key",
         "accounts.copy_private_key" => "Copy private key",
@@ -305,6 +309,8 @@ fn en(key: &str) -> &'static str {
         "auth.new_password" => "NEW PASSWORD",
         "auth.password_min_hint" => "at least 12 characters",
         "auth.password_repeat_hint" => "repeat password",
+        "auth.show" => "Show",
+        "auth.hide" => "Hide",
 
         // Backup
         "backup.title" => "BACK UP YOUR RECOVERY PHRASE",
@@ -319,6 +325,9 @@ fn en(key: &str) -> &'static str {
         "backup.save_failed" => "Wallet data could not be saved. Keep your recovery phrase safe and retry.",
         "backup.qa_redacted_title" => "Recovery phrase is not loaded in QA",
         "backup.qa_redacted_body" => "This mock route verifies the layout only. It does not load, generate, copy, or display any recovery words.",
+        "backup.evidence_redacted_title" => "Recovery phrase hidden for evidence",
+        "backup.evidence_redacted_body" => "Owner-test evidence redaction is enabled. The wallet was created locally, but recovery material is not rendered, copied, logged, or captured.",
+        "backup.evidence_continue" => "Continue without displaying recovery material",
 
         // Toasts
         "toast.locked_title" => "Wallet locked",
@@ -534,6 +543,10 @@ fn zh(key: &str) -> &'static str {
         }
         "accounts.private_key_export" => "导出私钥",
         "accounts.private_key_export_note" => "只在离线并准备安全保存时导出。此值可以控制钱包。",
+        "accounts.export_reauth_label" => "重新输入钱包密码",
+        "accounts.export_reauth_placeholder" => "钱包密码",
+        "accounts.export_reauth_hint" => "私钥会从加密钱包重新解锁导出，离开此页面后自动清除。",
+        "accounts.export_reauth_required" => "显示私钥前必须重新输入钱包密码。",
         "accounts.reveal_private_key" => "显示私钥",
         "accounts.hide_private_key" => "隐藏私钥",
         "accounts.copy_private_key" => "复制私钥",
@@ -643,6 +656,8 @@ fn zh(key: &str) -> &'static str {
         "auth.new_password" => "新密码",
         "auth.password_min_hint" => "至少 12 个字符",
         "auth.password_repeat_hint" => "再次输入密码",
+        "auth.show" => "显示",
+        "auth.hide" => "隐藏",
 
         // Backup
         "backup.title" => "备份你的助记词",
@@ -661,6 +676,11 @@ fn zh(key: &str) -> &'static str {
         "backup.qa_redacted_body" => {
             "这个本地 mock 页面只验证布局，不加载、生成、复制或显示任何恢复词。"
         }
+        "backup.evidence_redacted_title" => "证据截图隐藏恢复短语",
+        "backup.evidence_redacted_body" => {
+            "Owner 测试证据脱敏已启用。钱包在本地创建，但恢复材料不会渲染、复制、记录或进入截图。"
+        }
+        "backup.evidence_continue" => "不显示恢复材料并继续",
 
         // Toasts
         "toast.locked_title" => "钱包已锁定",

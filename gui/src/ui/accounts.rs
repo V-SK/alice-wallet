@@ -78,6 +78,33 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
         ui.add_space(12.0);
         if wallet.can_export_private_key() {
             if app.private_key_export.is_empty() {
+                field_label(ui, app.t("accounts.export_reauth_label"));
+                ui.add_space(4.0);
+                let reauth_placeholder = app.t("accounts.export_reauth_placeholder");
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut app.private_key_export_password)
+                            .password(!app.private_key_export_password_visible)
+                            .desired_width(260.0)
+                            .hint_text(reauth_placeholder),
+                    );
+                    let toggle = if app.private_key_export_password_visible {
+                        app.t("auth.hide")
+                    } else {
+                        app.t("auth.show")
+                    };
+                    if ghost_button(ui, toggle).clicked() {
+                        app.private_key_export_password_visible =
+                            !app.private_key_export_password_visible;
+                    }
+                });
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new(app.t("accounts.export_reauth_hint"))
+                        .size(11.5)
+                        .color(THEME.text_dim),
+                );
+                ui.add_space(10.0);
                 if secondary_button(ui, app.t("accounts.reveal_private_key"), true, true).clicked()
                 {
                     app.reveal_private_key_export();
@@ -106,6 +133,7 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
                     }
                     if ghost_button(ui, app.t("accounts.hide_private_key")).clicked() {
                         app.clear_private_key_export();
+                        app.clear_private_key_export_password();
                     }
                 });
             }

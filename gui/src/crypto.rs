@@ -1,3 +1,4 @@
+use crate::config;
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::Aes256Gcm;
 use argon2::{Algorithm, Argon2, Params, Version};
@@ -107,12 +108,16 @@ pub struct UnlockOutcome {
 }
 
 pub fn default_wallet_path() -> PathBuf {
-    data_dir().join("AliceWallet").join("wallet.json")
+    config::wallet_data_root().join("wallet.json")
 }
 
 pub fn detect_wallet_path() -> PathBuf {
     let primary = default_wallet_path();
     if primary.exists() {
+        return primary;
+    }
+
+    if config::wallet_data_root_is_overridden() {
         return primary;
     }
 
@@ -397,10 +402,6 @@ fn verify_identity(payload: &WalletPayload, keypair: &Sr25519Keypair) -> Result<
     }
 
     Ok(())
-}
-
-fn data_dir() -> PathBuf {
-    dirs::data_local_dir().unwrap_or_else(legacy_data_dir)
 }
 
 fn legacy_wallet_path() -> PathBuf {

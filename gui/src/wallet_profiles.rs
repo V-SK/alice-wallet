@@ -95,9 +95,7 @@ fn default_profile_access() -> WalletProfileAccess {
 }
 
 pub fn default_profile_root() -> PathBuf {
-    dirs::data_local_dir()
-        .unwrap_or_else(|| dirs::home_dir().expect("home dir").join(".alice"))
-        .join("AliceWallet")
+    crate::config::wallet_data_root()
 }
 
 impl WalletProfileMetadata {
