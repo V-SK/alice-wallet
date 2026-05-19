@@ -10,22 +10,34 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
     subtle(ui, app.t("address_book.subtitle"));
     ui.add_space(16.0);
 
+    let records = app.active_address_book_records();
     card(ui, |ui| {
         section_title(ui, app.t("address_book.empty_title"));
         ui.add_space(8.0);
-        ui.vertical_centered(|ui| {
-            ui.label(
-                RichText::new(app.t("address_book.empty"))
-                    .size(13.5)
-                    .strong()
-                    .color(THEME.text_hi),
-            );
-            ui.label(
-                RichText::new(app.t("address_book.empty_hint"))
-                    .size(12.0)
-                    .color(THEME.text_mid),
-            );
-        });
+        if records.is_empty() {
+            ui.vertical_centered(|ui| {
+                ui.label(
+                    RichText::new(app.t("address_book.empty"))
+                        .size(13.5)
+                        .strong()
+                        .color(THEME.text_hi),
+                );
+                ui.label(
+                    RichText::new(app.t("address_book.empty_hint"))
+                        .size(12.0)
+                        .color(THEME.text_mid),
+                );
+            });
+        } else {
+            for record in records {
+                book_row(ui, &record.label, &short_address(&record.address));
+                if !record.note.is_empty() {
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(&record.note).size(11.5).color(THEME.text_mid));
+                }
+                ui.add_space(8.0);
+            }
+        }
     });
 
     ui.add_space(14.0);
@@ -56,6 +68,22 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
                 .color(THEME.text_mid),
         );
     });
+}
+
+fn short_address(address: &str) -> String {
+    if address.chars().count() <= 18 {
+        return address.to_string();
+    }
+    let head: String = address.chars().take(8).collect();
+    let tail: String = address
+        .chars()
+        .rev()
+        .take(6)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+    format!("{}…{}", head, tail)
 }
 
 fn book_row(ui: &mut egui::Ui, label: &str, value: &str) {

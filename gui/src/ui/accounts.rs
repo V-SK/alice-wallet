@@ -7,9 +7,14 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
     let Some(wallet) = app.secrets.clone() else {
         return;
     };
+    let active_profile = app.active_profile_metadata();
+    let profile_label = active_profile
+        .as_ref()
+        .map(|profile| profile.label.as_str())
+        .unwrap_or(app.t("accounts.primary_label"));
 
     section_title(ui, app.t("accounts.title"));
-    heading(ui, app.t("accounts.heading"));
+    heading(ui, "Wallet profile");
     ui.add_space(4.0);
     subtle(ui, app.t("accounts.subtitle"));
     ui.add_space(16.0);
@@ -17,7 +22,7 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
     card_accent(ui, |ui| {
         section_title(ui, app.t("accounts.current"));
         ui.label(
-            RichText::new(app.t("accounts.primary_label"))
+            RichText::new(profile_label)
                 .size(16.0)
                 .strong()
                 .color(THEME.text_hi),
@@ -47,7 +52,7 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
         account_row(
             ui,
             app.t("accounts.default_address"),
-            app.t("accounts.enabled"),
+            &profile_access_label(active_profile.as_ref()),
         );
         ui.add_space(8.0);
         account_row(ui, app.t("accounts.labels"), app.t("accounts.local_only"));
@@ -64,6 +69,16 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
                 .color(THEME.text_mid),
         );
     });
+}
+
+fn profile_access_label(profile: Option<&crate::wallet_profiles::WalletProfileMetadata>) -> String {
+    match profile.map(|profile| profile.access) {
+        Some(crate::wallet_profiles::WalletProfileAccess::ReadOnly) => "Read-only".to_string(),
+        Some(crate::wallet_profiles::WalletProfileAccess::DisplayOnly) => {
+            "Display-only".to_string()
+        }
+        _ => "Enabled".to_string(),
+    }
 }
 
 fn account_row(ui: &mut egui::Ui, label: &str, value: &str) {

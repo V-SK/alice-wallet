@@ -50,33 +50,66 @@ fn auth_shell<F: FnOnce(&mut egui::Ui)>(ctx: &egui::Context, content: F) {
 pub fn render_choice(ctx: &egui::Context, app: &mut AliceWalletApp) {
     auth_shell(ctx, |ui| {
         card_accent(ui, |ui| {
-            heading(ui, "Local wallet detected");
+            heading(ui, "Wallet profiles");
             ui.add_space(6.0);
-            subtle(ui, "Choose whether to unlock the saved wallet, import a recovery phrase, or create a new wallet.");
+            subtle(ui, "Choose a local Alice wallet profile, import a recovery phrase, or create a new wallet.");
             ui.add_space(18.0);
 
-            if app.detected_wallet_path.is_some() {
+            let profiles = app.profile_manager.safe_profiles();
+            if profiles.is_empty() {
                 egui::Frame::NONE
                     .fill(THEME.bg_panel_hi)
                     .corner_radius(10)
                     .inner_margin(egui::Margin::same(12))
                     .stroke(egui::Stroke::new(1.0, THEME.border))
                     .show(ui, |ui| {
-                        field_label(ui, "SAVED WALLET");
+                        field_label(ui, "LOCAL PROFILES");
                         ui.label(
-                            RichText::new("Ready to unlock on this device")
+                            RichText::new("No saved profiles on this device")
                                 .size(12.0)
                                 .color(THEME.text_hi),
                         );
-                        if let Some(p) = &app.payload {
-                            ui.add_space(4.0);
-                            ui.label(
-                                RichText::new(format!("Format v{} · {}", p.version, p.kdf))
-                                    .size(11.0)
-                                    .color(THEME.text_dim),
-                            );
-                        }
                     });
+            } else {
+                for profile in profiles {
+                    egui::Frame::NONE
+                        .fill(THEME.bg_panel_hi)
+                        .corner_radius(10)
+                        .inner_margin(egui::Margin::same(12))
+                        .stroke(egui::Stroke::new(1.0, THEME.border))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.vertical(|ui| {
+                                    field_label(ui, "LOCAL PROFILE");
+                                    ui.label(
+                                        RichText::new(&profile.label)
+                                            .size(13.0)
+                                            .strong()
+                                            .color(THEME.text_hi),
+                                    );
+                                    ui.add_space(4.0);
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "{} · {}",
+                                            short_address(&profile.address),
+                                            access_label(profile.access)
+                                        ))
+                                        .size(11.0)
+                                        .color(THEME.text_dim),
+                                    );
+                                });
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if secondary_button(ui, "Select", true, false).clicked() {
+                                            app.select_wallet_profile(&profile.profile_id);
+                                        }
+                                    },
+                                );
+                            });
+                        });
+                    ui.add_space(8.0);
+                }
             }
 
             ui.add_space(18.0);
@@ -93,6 +126,30 @@ pub fn render_choice(ctx: &egui::Context, app: &mut AliceWalletApp) {
             }
         });
     });
+}
+
+fn short_address(address: &str) -> String {
+    if address.chars().count() <= 18 {
+        return address.to_string();
+    }
+    let head: String = address.chars().take(8).collect();
+    let tail: String = address
+        .chars()
+        .rev()
+        .take(6)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+    format!("{}…{}", head, tail)
+}
+
+fn access_label(access: crate::wallet_profiles::WalletProfileAccess) -> &'static str {
+    match access {
+        crate::wallet_profiles::WalletProfileAccess::Normal => "locked",
+        crate::wallet_profiles::WalletProfileAccess::ReadOnly => "read-only",
+        crate::wallet_profiles::WalletProfileAccess::DisplayOnly => "display-only",
+    }
 }
 
 pub fn render_unlock(ctx: &egui::Context, app: &mut AliceWalletApp) {

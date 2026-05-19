@@ -59,9 +59,16 @@ pub fn render(ctx: &egui::Context, app: &mut AliceWalletApp) {
                                         rand::thread_rng().fill_bytes(&mut entropy);
                                         let mnemonic = Mnemonic::from_entropy(&entropy).expect("32 bytes -> mnemonic");
                                         let phrase = mnemonic.words().collect::<Vec<&str>>().join(" ");
-                                        app.auth_busy = true;
-                                        app.auth_error.clear();
-                                        let _ = app.tx.send(AsyncAction::Create(phrase, app.password_input.clone()));
+                                        match app.begin_profile_create() {
+                                            Ok(_) => {
+                                                app.auth_busy = true;
+                                                app.auth_error.clear();
+                                                let _ = app.tx.send(AsyncAction::Create(phrase, app.password_input.clone()));
+                                            }
+                                            Err(e) => {
+                                                app.auth_error = e;
+                                            }
+                                        }
                                     }
                                 }
 

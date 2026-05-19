@@ -78,6 +78,44 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
             }
         });
     });
+
+    ui.add_space(14.0);
+    card(ui, |ui| {
+        section_title(ui, "Request labels");
+        let requests = app.active_receive_requests();
+        if requests.is_empty() {
+            ui.label(
+                RichText::new("No local request labels yet")
+                    .size(12.5)
+                    .color(THEME.text_mid),
+            );
+        } else {
+            for request in requests {
+                ui.add_space(6.0);
+                request_row(
+                    ui,
+                    &request.label,
+                    request.amount_hint.as_deref().unwrap_or("Open amount"),
+                );
+            }
+        }
+    });
+}
+
+fn request_row(ui: &mut egui::Ui, label: &str, value: &str) {
+    egui::Frame::NONE
+        .fill(THEME.bg_panel_hi)
+        .corner_radius(10)
+        .inner_margin(egui::Margin::symmetric(12, 9))
+        .stroke(Stroke::new(1.0, THEME.border))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(label).size(12.0).color(THEME.text_hi));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(RichText::new(value).size(12.0).color(THEME.text_mid));
+                });
+            });
+        });
 }
 
 fn render_qr(data: &str) -> Option<ColorImage> {

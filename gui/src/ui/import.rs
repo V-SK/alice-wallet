@@ -190,8 +190,6 @@ fn submit_import(app: &mut AliceWalletApp) {
         app.auth_error = app.t("auth.password_mismatch").to_string();
         return;
     }
-    let target = app.wallet_path.clone();
-
     let phrase = app
         .mnemonic_words
         .iter()
@@ -208,15 +206,20 @@ fn submit_import(app: &mut AliceWalletApp) {
     }
     use bip39::Mnemonic;
     match Mnemonic::parse(&phrase) {
-        Ok(_) => {
-            app.auth_busy = true;
-            app.auth_error.clear();
-            let _ = app.tx.send(AsyncAction::Import(
-                phrase,
-                app.password_input.clone(),
-                target,
-            ));
-        }
+        Ok(_) => match app.begin_profile_import() {
+            Ok(target) => {
+                app.auth_busy = true;
+                app.auth_error.clear();
+                let _ = app.tx.send(AsyncAction::Import(
+                    phrase,
+                    app.password_input.clone(),
+                    target,
+                ));
+            }
+            Err(e) => {
+                app.auth_error = e;
+            }
+        },
         Err(e) => {
             let _ = e;
             app.auth_error = app.t("auth.invalid_mnemonic").to_string();

@@ -8,8 +8,11 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
     let Some(wallet) = app.secrets.clone() else {
         return;
     };
+    let reward_identity = app
+        .selected_reward_identity()
+        .unwrap_or_else(|| wallet.address.clone());
 
-    let packet = match miner::rehearsal_status_packet(&wallet.address, None) {
+    let packet = match miner::rehearsal_status_packet(&reward_identity, None) {
         Ok(packet) => packet,
         Err(_) => {
             card(ui, |ui| {

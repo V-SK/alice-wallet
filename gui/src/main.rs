@@ -6,6 +6,7 @@ mod history;
 mod i18n;
 mod miner;
 mod ui;
+mod wallet_profiles;
 
 use eframe::egui::IconData;
 

@@ -211,6 +211,10 @@ pub fn qa_display_address() -> String {
     account_id_to_ss58(&[0x42u8; 32], SS58_FORMAT)
 }
 
+pub fn qa_display_address_variant(byte: u8) -> String {
+    account_id_to_ss58(&[byte; 32], SS58_FORMAT)
+}
+
 pub fn create_wallet_payload(mnemonic: &str, password: &str) -> Result<WalletPayload, String> {
     let seed_bytes = substrate_seed_from_phrase(mnemonic)?;
     let keypair = Sr25519Keypair::from_secret_key(seed_bytes).map_err(|e| e.to_string())?;

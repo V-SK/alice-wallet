@@ -4,6 +4,10 @@ use crate::crypto::{self, WalletPayload, WalletSecrets};
 use crate::history::{self, TxRecord};
 use crate::i18n;
 use crate::ui;
+use crate::wallet_profiles::{
+    self, AddressBookRecord, ReceiveRequestRecord, WalletProfileAccess, WalletProfileManager,
+    WalletProfileMetadata, WalletProfileReservation, LEGACY_PROFILE_ID,
+};
 use eframe::egui;
 use std::sync::{
     mpsc::{channel, Receiver, Sender},
@@ -121,6 +125,8 @@ pub struct AliceWalletApp {
     pub wallet_path: std::path::PathBuf,
     pub payload: Option<WalletPayload>,
     pub secrets: Option<WalletSecrets>,
+    pub profile_manager: WalletProfileManager,
+    pub pending_profile_reservation: Option<WalletProfileReservation>,
 
     // settings
     pub settings: Settings,
@@ -188,6 +194,11 @@ impl AliceWalletApp {
         } else {
             Settings::load()
         };
+        let profile_manager = if qa_mock_mode {
+            WalletProfileManager::qa_mock_profiles()
+        } else {
+            WalletProfileManager::load_or_default(wallet_profiles::default_profile_root())
+        };
         let (gui_tx, worker_rx) = channel::<AsyncAction>();
         let (worker_tx, gui_rx) = channel::<AsyncResult>();
 
@@ -204,6 +215,8 @@ impl AliceWalletApp {
             wallet_path: default_wallet_path,
             payload: None,
             secrets: None,
+            profile_manager,
+            pending_profile_reservation: None,
             settings_lock_draft: settings.auto_lock_minutes.to_string(),
             settings,
             password_input: String::new(),
@@ -257,9 +270,12 @@ impl AliceWalletApp {
         self.page = qa_page_from_env();
         self.payload = None;
         self.detected_wallet_path = None;
-        self.secrets = Some(crypto::WalletSecrets::display_only(
-            crypto::qa_display_address(),
-        ));
+        let address = self
+            .profile_manager
+            .active_profile()
+            .map(|profile| profile.address.clone())
+            .unwrap_or_else(crypto::qa_display_address);
+        self.secrets = Some(crypto::WalletSecrets::display_only(address));
         self.settings.rpc_url = "wss://alice-wallet-qa.invalid".into();
         self.balance = Some(0);
         self.block_height = None;
@@ -309,10 +325,18 @@ impl AliceWalletApp {
     }
 
     fn check_wallet(&mut self) {
+        if !self.profile_manager.safe_profiles().is_empty() {
+            self.phase = Phase::WalletChoice;
+            return;
+        }
+
         let detected_path = crypto::detect_wallet_path();
         if detected_path.exists() {
             if let Ok(content) = std::fs::read_to_string(&detected_path) {
                 if let Ok(payload) = serde_json::from_str::<WalletPayload>(&content) {
+                    let _ = self
+                        .profile_manager
+                        .upsert_detected_default_profile(payload.address.clone());
                     self.detected_wallet_path = Some(detected_path);
                     self.payload = Some(payload);
                     self.phase = Phase::WalletChoice;
@@ -326,6 +350,16 @@ impl AliceWalletApp {
     }
 
     pub fn use_detected_wallet(&mut self) {
+        let selected_profile_id = self.active_profile_id().or_else(|| {
+            self.profile_manager
+                .safe_profiles()
+                .first()
+                .map(|profile| profile.profile_id.clone())
+        });
+        if let Some(profile_id) = selected_profile_id {
+            self.select_wallet_profile(&profile_id);
+            return;
+        }
         if let Some(path) = &self.detected_wallet_path {
             self.wallet_path = path.clone();
             self.clear_password_inputs();
@@ -338,6 +372,7 @@ impl AliceWalletApp {
 
     pub fn prepare_new_wallet(&mut self) {
         self.wallet_path = self.default_wallet_path.clone();
+        self.pending_profile_reservation = None;
         self.clear_password_inputs();
         self.clear_mnemonic_inputs();
         self.clear_mnemonic_backup();
@@ -347,11 +382,134 @@ impl AliceWalletApp {
 
     pub fn prepare_import_wallet(&mut self) {
         self.wallet_path = self.default_wallet_path.clone();
+        self.pending_profile_reservation = None;
         self.clear_password_inputs();
         self.clear_mnemonic_inputs();
         self.clear_mnemonic_backup();
         self.auth_error.clear();
         self.phase = Phase::Import;
+    }
+
+    pub fn begin_profile_create(&mut self) -> Result<(), String> {
+        let reservation = self
+            .profile_manager
+            .reserve_new_profile("Alice wallet", WalletProfileAccess::Normal)?;
+        self.wallet_path = reservation.wallet_path.clone();
+        self.pending_profile_reservation = Some(reservation);
+        Ok(())
+    }
+
+    pub fn begin_profile_import(&mut self) -> Result<std::path::PathBuf, String> {
+        let reservation = self
+            .profile_manager
+            .reserve_new_profile("Imported wallet", WalletProfileAccess::Normal)?;
+        self.wallet_path = reservation.wallet_path.clone();
+        self.pending_profile_reservation = Some(reservation);
+        Ok(self.wallet_path.clone())
+    }
+
+    pub fn finalize_pending_profile(&mut self, address: String) -> Result<(), String> {
+        let Some(reservation) = self.pending_profile_reservation.take() else {
+            return Ok(());
+        };
+        self.profile_manager
+            .finalize_reserved_profile(reservation, address)?;
+        if !self.qa_mock_mode {
+            self.profile_manager.save()?;
+        }
+        Ok(())
+    }
+
+    pub fn clear_active_wallet_secret_state(&mut self) {
+        self.secrets = None;
+        self.payload = None;
+        self.balance = None;
+        self.block_height = None;
+        self.clear_password_inputs();
+        self.clear_mnemonic_inputs();
+        self.clear_mnemonic_backup();
+        self.reset_send_review();
+        self.refresh_pending = 0;
+    }
+
+    pub fn select_wallet_profile(&mut self, profile_id: &str) {
+        let Some(profile) = self.profile_manager.profile(profile_id).cloned() else {
+            self.auth_error = "Wallet profile is not available.".to_string();
+            return;
+        };
+
+        self.clear_active_wallet_secret_state();
+        if let Err(err) = self.profile_manager.set_active_profile(&profile.profile_id) {
+            self.auth_error = err;
+            return;
+        }
+
+        match profile.access {
+            WalletProfileAccess::ReadOnly | WalletProfileAccess::DisplayOnly => {
+                self.wallet_path = self
+                    .profile_manager
+                    .profile_wallet_path(&profile.profile_id);
+                self.secrets = Some(crypto::WalletSecrets::display_only(profile.address));
+                self.phase = Phase::Main;
+                self.page = Page::Dashboard;
+                self.auth_error.clear();
+            }
+            WalletProfileAccess::Normal => {
+                let path = if profile.profile_id == LEGACY_PROFILE_ID {
+                    self.detected_wallet_path
+                        .clone()
+                        .unwrap_or_else(crypto::detect_wallet_path)
+                } else {
+                    self.profile_manager
+                        .profile_wallet_path(&profile.profile_id)
+                };
+                match std::fs::read_to_string(&path)
+                    .ok()
+                    .and_then(|content| serde_json::from_str::<WalletPayload>(&content).ok())
+                {
+                    Some(payload) => {
+                        self.wallet_path = path;
+                        self.payload = Some(payload);
+                        self.phase = Phase::Unlock;
+                        self.auth_error.clear();
+                    }
+                    None => {
+                        self.auth_error =
+                            "Wallet profile data is unavailable on this device.".to_string();
+                        self.phase = Phase::WalletChoice;
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn active_profile_id(&self) -> Option<String> {
+        self.profile_manager
+            .active_profile()
+            .map(|profile| profile.profile_id.clone())
+    }
+
+    pub fn active_profile_metadata(&self) -> Option<WalletProfileMetadata> {
+        self.profile_manager.active_profile().cloned()
+    }
+
+    pub fn selected_reward_identity(&self) -> Option<String> {
+        wallet_profiles::selected_wallet_address(&self.profile_manager)
+            .or_else(|| self.secrets.as_ref().map(|secrets| secrets.address.clone()))
+    }
+
+    pub fn active_address_book_records(&self) -> Vec<AddressBookRecord> {
+        let Some(profile_id) = self.active_profile_id() else {
+            return Vec::new();
+        };
+        self.profile_manager.address_book_records(&profile_id)
+    }
+
+    pub fn active_receive_requests(&self) -> Vec<ReceiveRequestRecord> {
+        let Some(profile_id) = self.active_profile_id() else {
+            return Vec::new();
+        };
+        self.profile_manager.receive_requests(&profile_id)
     }
 
     pub fn lang(&self) -> Lang {
@@ -575,6 +733,47 @@ mod tests {
         std::env::remove_var("ALICE_WALLET_QA_MOCK");
         std::env::remove_var("ALICE_WALLET_QA_PAGE");
         std::env::remove_var("ALICE_WALLET_QA_PHASE");
+    }
+
+    #[test]
+    fn qa_mock_mode_exposes_two_display_only_profiles() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        std::env::set_var("ALICE_WALLET_QA_MOCK", "1");
+        let rt = Runtime::new().expect("runtime");
+        let app = AliceWalletApp::new(rt);
+        std::env::remove_var("ALICE_WALLET_QA_MOCK");
+
+        let profiles = app.profile_manager.safe_profiles();
+        assert!(profiles.len() >= 2);
+        assert!(profiles
+            .iter()
+            .all(|profile| profile.access == WalletProfileAccess::DisplayOnly));
+        assert!(app.secrets.is_some());
+        assert!(app.payload.is_none());
+    }
+
+    #[test]
+    fn switching_active_profile_clears_in_memory_secrets() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        std::env::set_var("ALICE_WALLET_QA_MOCK", "1");
+        let rt = Runtime::new().expect("runtime");
+        let mut app = AliceWalletApp::new(rt);
+        std::env::remove_var("ALICE_WALLET_QA_MOCK");
+
+        app.password_input = "temporary-passphrase".to_string();
+        app.mnemonic_backup = "temporary local backup phrase".to_string();
+        app.balance = Some(99);
+        let first_address = app.secrets.as_ref().map(|secrets| secrets.address.clone());
+        app.select_wallet_profile("qa-cold-wallet");
+
+        assert!(app.password_input.is_empty());
+        assert!(app.mnemonic_backup.is_empty());
+        assert_eq!(app.balance, None);
+        assert_eq!(app.active_profile_id().as_deref(), Some("qa-cold-wallet"));
+        assert_ne!(
+            first_address,
+            app.secrets.as_ref().map(|secrets| secrets.address.clone())
+        );
     }
 }
 
@@ -856,6 +1055,12 @@ impl AliceWalletApp {
                 self.phase = Phase::Main;
                 self.page = Page::Dashboard;
                 self.auth_error.clear();
+                if let Some(profile_id) = self.active_profile_id() {
+                    let _ = self.profile_manager.mark_opened(&profile_id);
+                    if !self.qa_mock_mode {
+                        let _ = self.profile_manager.save();
+                    }
+                }
                 self.bump_interaction();
                 self.start_refresh(&secrets.address);
             }
@@ -872,12 +1077,15 @@ impl AliceWalletApp {
                 self.clear_password_inputs();
                 let save_result = crypto::write_wallet_payload(&self.wallet_path, &payload);
                 self.payload = Some(payload);
-                self.secrets = Some(secrets);
+                self.secrets = Some(secrets.clone());
                 self.mnemonic_backup = phrase;
                 self.pick_backup_quiz();
                 self.phase = Phase::Backup;
                 self.auth_error = match save_result {
-                    Ok(_) => String::new(),
+                    Ok(_) => match self.finalize_pending_profile(secrets.address) {
+                        Ok(_) => String::new(),
+                        Err(e) => e,
+                    },
                     Err(e) => {
                         let _ = e;
                         "Wallet created, but saving needs retry. Keep this phrase safe.".to_string()
@@ -894,6 +1102,11 @@ impl AliceWalletApp {
                 self.clear_mnemonic_backup();
                 match save_result {
                     Ok(_) => {
+                        if let Err(err) = self.finalize_pending_profile(secrets.address.clone()) {
+                            self.phase = Phase::Import;
+                            self.auth_error = err;
+                            return;
+                        }
                         self.phase = Phase::Main;
                         self.page = Page::Dashboard;
                         self.auth_error.clear();
