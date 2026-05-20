@@ -10,6 +10,11 @@ pub const PRODUCTION_TRANSFER_ALLOWED: bool = false;
 pub const PAYOUT_ALLOWED: bool = false;
 pub const SETTLEMENT_ALLOWED: bool = false;
 pub const MINT_ALLOWED: bool = false;
+pub const ALICE_MAINNET_CHAIN_NAME: &str = "Alice Mainnet";
+pub const ALICE_MAINNET_GENESIS_HASH: &str =
+    "0x7746a1d14736a95e00a617a11094b6e86bbf91cd4e7e64c0e748e3c0d2ad54b0";
+pub const ALICE_RUNTIME_SPEC_NAME: &str = "solochain-template-runtime";
+pub const ALICE_APPROVED_RUNTIME_SPEC_VERSIONS: [u32; 1] = [108];
 
 pub type Client = OnlineClient<PolkadotConfig>;
 
@@ -130,12 +135,21 @@ impl NodeSyncState {
 pub struct NodeSyncEvidence {
     pub sync_mode: NodeSyncMode,
     pub connected: bool,
+    pub chain_identity: Option<ChainIdentityEvidence>,
     pub current_height: Option<u64>,
     pub target_height: Option<u64>,
     pub peers_count: Option<u32>,
     pub last_updated_unix: Option<i64>,
     pub observed_at_unix: i64,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChainIdentityEvidence {
+    pub chain_name: String,
+    pub genesis_hash: String,
+    pub runtime_spec_name: String,
+    pub runtime_spec_version: u32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -173,6 +187,11 @@ impl NodeSyncSnapshot {
     pub fn status_i18n_key(&self) -> &'static str {
         self.status.i18n_key()
     }
+
+    pub fn allows_balance_refresh(&self) -> bool {
+        matches!(self.status, NodeSyncState::Synced | NodeSyncState::Syncing)
+            && self.fail_closed_reason.is_none()
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -187,6 +206,13 @@ struct SystemSyncState {
 struct SystemHealth {
     peers: Option<u32>,
     is_syncing: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeVersion {
+    spec_name: String,
+    spec_version: u32,
 }
 
 pub fn sync_mode_from_url(url: &str) -> NodeSyncMode {
@@ -250,6 +276,10 @@ pub fn evaluate_node_sync(evidence: NodeSyncEvidence) -> NodeSyncSnapshot {
         return fail_closed(evidence, NodeSyncState::Stale, "stale_node_evidence");
     }
 
+    if let Err(reason) = validate_chain_identity(evidence.chain_identity.as_ref()) {
+        return fail_closed(evidence, NodeSyncState::Unavailable, reason);
+    }
+
     let Some(current) = evidence.current_height else {
         return fail_closed(
             evidence,
@@ -298,6 +328,27 @@ pub fn evaluate_node_sync(evidence: NodeSyncEvidence) -> NodeSyncSnapshot {
     }
 }
 
+fn validate_chain_identity(identity: Option<&ChainIdentityEvidence>) -> Result<(), &'static str> {
+    let Some(identity) = identity else {
+        return Err("missing_chain_identity");
+    };
+    if identity.chain_name.trim() != ALICE_MAINNET_CHAIN_NAME {
+        return Err("wrong_chain_name");
+    }
+    if identity.genesis_hash.trim().to_ascii_lowercase()
+        != ALICE_MAINNET_GENESIS_HASH.to_ascii_lowercase()
+    {
+        return Err("wrong_genesis_hash");
+    }
+    if identity.runtime_spec_name.trim() != ALICE_RUNTIME_SPEC_NAME {
+        return Err("wrong_runtime_spec_name");
+    }
+    if !ALICE_APPROVED_RUNTIME_SPEC_VERSIONS.contains(&identity.runtime_spec_version) {
+        return Err("wrong_runtime_spec_version");
+    }
+    Ok(())
+}
+
 fn fail_closed(
     evidence: NodeSyncEvidence,
     status: NodeSyncState,
@@ -332,6 +383,7 @@ pub async fn fetch_node_sync_snapshot(rpc_url: &str) -> NodeSyncSnapshot {
             return evaluate_node_sync(NodeSyncEvidence {
                 sync_mode,
                 connected: false,
+                chain_identity: None,
                 current_height: None,
                 target_height: None,
                 peers_count: None,
@@ -345,6 +397,19 @@ pub async fn fetch_node_sync_snapshot(rpc_url: &str) -> NodeSyncSnapshot {
     let sync_state: Result<SystemSyncState, _> =
         rpc.request("system_syncState", rpc_params![]).await;
     let health: Result<SystemHealth, _> = rpc.request("system_health", rpc_params![]).await;
+    let chain_name: Result<String, _> = rpc.request("system_chain", rpc_params![]).await;
+    let genesis_hash: Result<String, _> = rpc.request("chain_getBlockHash", rpc_params![0]).await;
+    let runtime_version: Result<RuntimeVersion, _> =
+        rpc.request("state_getRuntimeVersion", rpc_params![]).await;
+    let chain_identity = match (chain_name, genesis_hash, runtime_version) {
+        (Ok(chain_name), Ok(genesis_hash), Ok(runtime_version)) => Some(ChainIdentityEvidence {
+            chain_name,
+            genesis_hash,
+            runtime_spec_name: runtime_version.spec_name,
+            runtime_spec_version: runtime_version.spec_version,
+        }),
+        _ => None,
+    };
 
     match sync_state {
         Ok(sync) => {
@@ -357,6 +422,7 @@ pub async fn fetch_node_sync_snapshot(rpc_url: &str) -> NodeSyncSnapshot {
             evaluate_node_sync(NodeSyncEvidence {
                 sync_mode,
                 connected: is_connected,
+                chain_identity,
                 current_height: sync.current_block,
                 target_height: sync.highest_block,
                 peers_count: peers,
@@ -368,6 +434,7 @@ pub async fn fetch_node_sync_snapshot(rpc_url: &str) -> NodeSyncSnapshot {
         Err(e) => evaluate_node_sync(NodeSyncEvidence {
             sync_mode,
             connected: true,
+            chain_identity,
             current_height: None,
             target_height: None,
             peers_count: health.ok().and_then(|h| h.peers),
@@ -428,6 +495,15 @@ pub async fn get_balance(client: &Client, address: &str) -> Result<u128, String>
 mod tests {
     use super::*;
 
+    fn valid_chain_identity() -> ChainIdentityEvidence {
+        ChainIdentityEvidence {
+            chain_name: ALICE_MAINNET_CHAIN_NAME.to_string(),
+            genesis_hash: ALICE_MAINNET_GENESIS_HASH.to_string(),
+            runtime_spec_name: ALICE_RUNTIME_SPEC_NAME.to_string(),
+            runtime_spec_version: ALICE_APPROVED_RUNTIME_SPEC_VERSIONS[0],
+        }
+    }
+
     #[test]
     fn parses_whole_and_fractional_amounts() {
         assert_eq!(
@@ -461,6 +537,7 @@ mod tests {
         let snapshot = evaluate_node_sync(NodeSyncEvidence {
             sync_mode: NodeSyncMode::RemoteNode,
             connected: true,
+            chain_identity: Some(valid_chain_identity()),
             current_height: Some(100),
             target_height: None,
             peers_count: Some(3),
@@ -481,6 +558,7 @@ mod tests {
         let snapshot = evaluate_node_sync(NodeSyncEvidence {
             sync_mode: NodeSyncMode::RemoteNode,
             connected: true,
+            chain_identity: None,
             current_height: Some(100),
             target_height: Some(100),
             peers_count: Some(3),
@@ -500,6 +578,7 @@ mod tests {
         let synced = evaluate_node_sync(NodeSyncEvidence {
             sync_mode: NodeSyncMode::LocalNode,
             connected: true,
+            chain_identity: Some(valid_chain_identity()),
             current_height: Some(100),
             target_height: Some(100),
             peers_count: Some(2),
@@ -514,6 +593,7 @@ mod tests {
         let syncing = evaluate_node_sync(NodeSyncEvidence {
             sync_mode: NodeSyncMode::RemoteNode,
             connected: true,
+            chain_identity: Some(valid_chain_identity()),
             current_height: Some(90),
             target_height: Some(100),
             peers_count: Some(1),
@@ -527,10 +607,94 @@ mod tests {
     }
 
     #[test]
+    fn node_sync_missing_or_wrong_chain_identity_fails_closed() {
+        let missing = evaluate_node_sync(NodeSyncEvidence {
+            sync_mode: NodeSyncMode::RemoteNode,
+            connected: true,
+            chain_identity: None,
+            current_height: Some(100),
+            target_height: Some(100),
+            peers_count: Some(2),
+            last_updated_unix: Some(1000),
+            observed_at_unix: 1001,
+            error: None,
+        });
+        assert_eq!(missing.status, NodeSyncState::Unavailable);
+        assert_eq!(
+            missing.fail_closed_reason.as_deref(),
+            Some("missing_chain_identity")
+        );
+        assert!(!missing.allows_balance_refresh());
+
+        let mut wrong_genesis = valid_chain_identity();
+        wrong_genesis.genesis_hash =
+            "0x0000000000000000000000000000000000000000000000000000000000000000".into();
+        let snapshot = evaluate_node_sync(NodeSyncEvidence {
+            sync_mode: NodeSyncMode::RemoteNode,
+            connected: true,
+            chain_identity: Some(wrong_genesis),
+            current_height: Some(100),
+            target_height: Some(100),
+            peers_count: Some(2),
+            last_updated_unix: Some(1000),
+            observed_at_unix: 1001,
+            error: None,
+        });
+        assert_eq!(snapshot.status, NodeSyncState::Unavailable);
+        assert_eq!(
+            snapshot.fail_closed_reason.as_deref(),
+            Some("wrong_genesis_hash")
+        );
+        assert!(!snapshot.allows_balance_refresh());
+    }
+
+    #[test]
+    fn node_sync_wrong_runtime_spec_fails_closed() {
+        let mut wrong_spec_name = valid_chain_identity();
+        wrong_spec_name.runtime_spec_name = "not-alice".into();
+        let snapshot = evaluate_node_sync(NodeSyncEvidence {
+            sync_mode: NodeSyncMode::RemoteNode,
+            connected: true,
+            chain_identity: Some(wrong_spec_name),
+            current_height: Some(100),
+            target_height: Some(100),
+            peers_count: Some(2),
+            last_updated_unix: Some(1000),
+            observed_at_unix: 1001,
+            error: None,
+        });
+        assert_eq!(
+            snapshot.fail_closed_reason.as_deref(),
+            Some("wrong_runtime_spec_name")
+        );
+        assert!(!snapshot.allows_balance_refresh());
+
+        let mut wrong_spec_version = valid_chain_identity();
+        wrong_spec_version.runtime_spec_version = 109;
+        let snapshot = evaluate_node_sync(NodeSyncEvidence {
+            sync_mode: NodeSyncMode::RemoteNode,
+            connected: true,
+            chain_identity: Some(wrong_spec_version),
+            current_height: Some(100),
+            target_height: Some(100),
+            peers_count: Some(2),
+            last_updated_unix: Some(1000),
+            observed_at_unix: 1001,
+            error: None,
+        });
+        assert_eq!(
+            snapshot.fail_closed_reason.as_deref(),
+            Some("wrong_runtime_spec_version")
+        );
+        assert!(!snapshot.allows_balance_refresh());
+    }
+
+    #[test]
     fn node_sync_offline_and_error_are_not_ready() {
         let offline = evaluate_node_sync(NodeSyncEvidence {
             sync_mode: NodeSyncMode::RemoteNode,
             connected: false,
+            chain_identity: None,
             current_height: Some(100),
             target_height: Some(100),
             peers_count: Some(0),
@@ -544,6 +708,7 @@ mod tests {
         let err = evaluate_node_sync(NodeSyncEvidence {
             sync_mode: NodeSyncMode::RemoteNode,
             connected: true,
+            chain_identity: None,
             current_height: None,
             target_height: None,
             peers_count: None,

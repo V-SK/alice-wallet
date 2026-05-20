@@ -1362,6 +1362,20 @@ fn spawn_worker(rt: Arc<Runtime>, rx: Receiver<AsyncAction>, tx: Sender<AsyncRes
                     let tx = tx.clone();
                     rt.spawn(async move {
                         let fut = async {
+                            let snapshot = chain::fetch_node_sync_snapshot(&url).await;
+                            let allows_balance_refresh = snapshot.allows_balance_refresh();
+                            let fail_closed_reason = snapshot
+                                .fail_closed_reason
+                                .clone()
+                                .unwrap_or_else(|| "node_not_ready_for_balance_refresh".into());
+                            let _ = tx.send(AsyncResult::NodeSync(snapshot));
+                            if !allows_balance_refresh {
+                                let _ = tx.send(AsyncResult::SyncErr(format!(
+                                    "Balance blocked: {}",
+                                    fail_closed_reason
+                                )));
+                                return;
+                            }
                             match chain::get_client(&url).await {
                                 Ok(client) => {
                                     let _ = tx.send(AsyncResult::ConnectionOk);
@@ -1376,8 +1390,6 @@ fn spawn_worker(rt: Arc<Runtime>, rx: Receiver<AsyncAction>, tx: Sender<AsyncRes
                                             )));
                                         }
                                     }
-                                    let snapshot = chain::fetch_node_sync_snapshot(&url).await;
-                                    let _ = tx.send(AsyncResult::NodeSync(snapshot));
                                 }
                                 Err(e) => {
                                     let _ = tx.send(AsyncResult::ConnectionErr(e));
