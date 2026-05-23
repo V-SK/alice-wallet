@@ -4,7 +4,10 @@ use crate::app::{AliceWalletApp, ConnectionState, Page};
 use crate::config::Lang;
 use eframe::egui::{self, Color32, CornerRadius, RichText, Stroke};
 
-pub fn render(ctx: &egui::Context, app: &mut AliceWalletApp) {
+pub fn render(ui_root: &mut egui::Ui, app: &mut AliceWalletApp) {
+    let ctx = ui_root.ctx().clone();
+    let ctx = &ctx;
+
     // Global keyboard shortcuts: Cmd/Ctrl + 1..8 → switch page
     ctx.input(|i| {
         if i.modifiers.command {
@@ -36,15 +39,15 @@ pub fn render(ctx: &egui::Context, app: &mut AliceWalletApp) {
     });
 
     // Topbar
-    egui::TopBottomPanel::top("topbar")
-        .exact_height(52.0)
+    egui::Panel::top("topbar")
+        .exact_size(52.0)
         .frame(
             egui::Frame::NONE
                 .fill(THEME.bg_panel)
                 .inner_margin(egui::Margin::symmetric(22, 10))
                 .stroke(Stroke::new(1.0, THEME.border)),
         )
-        .show(ctx, |ui| {
+        .show_inside(ui_root, |ui| {
             ui.horizontal_centered(|ui| {
                 // Connection dot
                 let (dot_color, dot_text) = match &app.connection_status {
@@ -143,8 +146,8 @@ pub fn render(ctx: &egui::Context, app: &mut AliceWalletApp) {
         });
 
     // Sidebar
-    egui::SidePanel::left("sidebar")
-        .exact_width(240.0)
+    egui::Panel::left("sidebar")
+        .exact_size(240.0)
         .resizable(false)
         .frame(
             egui::Frame::NONE
@@ -152,7 +155,7 @@ pub fn render(ctx: &egui::Context, app: &mut AliceWalletApp) {
                 .inner_margin(egui::Margin::symmetric(18, 22))
                 .stroke(Stroke::new(1.0, THEME.border)),
         )
-        .show(ctx, |ui| {
+        .show_inside(ui_root, |ui| {
             // Logo header — bare orange triangle, no box.
             ui.horizontal(|ui| {
                 ui.add(
@@ -215,7 +218,7 @@ pub fn render(ctx: &egui::Context, app: &mut AliceWalletApp) {
     // Central content
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE.fill(THEME.bg_base))
-        .show(ctx, |ui| {
+        .show_inside(ui_root, |ui| {
             let rect = ui.max_rect();
             paint_backdrop(ui, rect);
 
@@ -303,7 +306,7 @@ fn render_toast(ctx: &egui::Context, app: &mut AliceWalletApp) {
     }
     ctx.request_repaint();
 
-    let screen = ctx.screen_rect();
+    let screen = ctx.content_rect();
     egui::Area::new(egui::Id::new("toast_area"))
         .fixed_pos(egui::pos2(screen.right() - 380.0, screen.bottom() - 96.0))
         .order(egui::Order::Foreground)

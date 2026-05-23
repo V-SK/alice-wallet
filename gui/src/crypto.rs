@@ -524,9 +524,15 @@ mod tests {
             unlocked.secrets.export_private_key_hex().as_deref(),
             Some(seed_hex)
         );
-        assert!(WalletSecrets::display_only(payload.address)
-            .export_private_key_hex()
-            .is_none());
+        let keypair = unlocked.secrets.to_keypair().expect("unlocked keypair");
+        assert_eq!(
+            payload.public_key,
+            format!("0x{}", hex::encode(keypair.public_key().0))
+        );
+
+        let display_only = WalletSecrets::display_only(payload.address);
+        assert!(display_only.export_private_key_hex().is_none());
+        assert!(display_only.to_keypair().is_err());
     }
 
     #[test]

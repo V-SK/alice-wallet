@@ -3,10 +3,10 @@ use super::widgets::*;
 use crate::app::{AliceWalletApp, AsyncAction, ImportMethod, Phase};
 use eframe::egui::{self, RichText};
 
-pub fn render(ctx: &egui::Context, app: &mut AliceWalletApp) {
+pub fn render(ui_root: &mut egui::Ui, app: &mut AliceWalletApp) {
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE.fill(THEME.bg_base))
-        .show(ctx, |ui| {
+        .show_inside(ui_root, |ui| {
             let rect = ui.max_rect();
             paint_backdrop(ui, rect);
             egui::ScrollArea::vertical().show(ui, |ui| {

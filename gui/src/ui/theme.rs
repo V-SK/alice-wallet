@@ -13,13 +13,11 @@ pub struct Theme {
     pub primary: Color32,
     pub primary_hi: Color32,
     pub primary_dim: Color32,
-    pub primary_glow: Color32,
     pub text_hi: Color32,
     pub text_mid: Color32,
     pub text_dim: Color32,
     pub danger: Color32,
     pub danger_bg: Color32,
-    pub success: Color32,
     pub warning_bg: Color32,
 }
 
@@ -35,13 +33,11 @@ pub const THEME: Theme = Theme {
     primary: Color32::from_rgb(249, 115, 22),
     primary_hi: Color32::from_rgb(251, 146, 60),
     primary_dim: Color32::from_rgb(234, 88, 12),
-    primary_glow: Color32::from_rgb(124, 45, 18),
     text_hi: Color32::from_rgb(255, 255, 255),
     text_mid: Color32::from_rgb(161, 161, 170),
     text_dim: Color32::from_rgb(82, 82, 91),
     danger: Color32::from_rgb(239, 68, 68),
     danger_bg: Color32::from_rgb(40, 12, 12),
-    success: Color32::from_rgb(249, 115, 22),
     warning_bg: Color32::from_rgb(40, 24, 8),
 };
 
@@ -87,7 +83,7 @@ pub fn install_fonts(ctx: &egui::Context) {
 
 pub fn apply_style(ctx: &egui::Context) {
     let t = THEME;
-    let mut style = (*ctx.style()).clone();
+    let mut style = (*ctx.global_style()).clone();
 
     style.spacing.item_spacing = egui::vec2(10.0, 10.0);
     style.spacing.button_padding = egui::vec2(14.0, 10.0);
@@ -145,7 +141,7 @@ pub fn apply_style(ctx: &egui::Context) {
     w.open.bg_stroke = Stroke::new(1.0, t.primary);
     w.open.corner_radius = 10.into();
 
-    ctx.set_style(style);
+    ctx.set_global_style(style);
 }
 
 /// Pure-black backdrop. No glows. The official site is just `#000`.

@@ -159,17 +159,6 @@ pub fn error_banner(ui: &mut Ui, msg: &str) {
         });
 }
 
-pub fn success_banner(ui: &mut Ui, msg: &str) {
-    egui::Frame::NONE
-        .fill(THEME.primary_dim)
-        .corner_radius(10)
-        .inner_margin(egui::Margin::same(12))
-        .stroke(Stroke::new(1.0, THEME.primary))
-        .show(ui, |ui| {
-            ui.label(RichText::new(msg).size(12.5).color(THEME.primary_hi));
-        });
-}
-
 pub fn shortened_address(addr: &str) -> String {
     if addr.len() <= 14 {
         return addr.to_string();

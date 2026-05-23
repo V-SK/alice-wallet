@@ -121,7 +121,6 @@ pub enum AsyncResult {
 // ────────────────────────────────────────────────────────────────────────────
 
 pub struct AliceWalletApp {
-    pub rt: Arc<Runtime>,
     pub qa_mock_mode: bool,
     pub network_disabled: bool,
     pub evidence_redact_secrets: bool,
@@ -223,7 +222,6 @@ impl AliceWalletApp {
         spawn_worker(rt.clone(), worker_rx, worker_tx);
 
         let mut app = Self {
-            rt,
             qa_mock_mode,
             network_disabled,
             evidence_redact_secrets,
@@ -692,7 +690,7 @@ impl AliceWalletApp {
     }
 
     pub fn t(&self, key: &str) -> &'static str {
-        i18n::t(self.settings.lang, key)
+        i18n::t(self.lang(), key)
     }
 
     pub fn lock_now(&mut self) {
@@ -1126,6 +1124,44 @@ mod tests {
     }
 
     #[test]
+    fn push_history_caps_memory_and_persists_local_history() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let root = phase40t_temp_root("history-persistence");
+        std::env::remove_var("ALICE_WALLET_QA_MOCK");
+        std::env::set_var("ALICE_WALLET_DATA_ROOT", &root);
+        std::env::set_var("ALICE_WALLET_NETWORK_DISABLED", "1");
+
+        let rt = Runtime::new().expect("runtime");
+        let mut app = AliceWalletApp::new(rt);
+        app.history.clear();
+
+        for index in 0..505 {
+            app.push_history(TxRecord {
+                ts: chrono::Utc::now(),
+                kind: history::TxKind::Send,
+                amount: Some(index),
+                counterparty: Some(format!("counterparty-{index}")),
+                hash: format!("0x{index:064x}"),
+                ok: true,
+            });
+        }
+
+        let persisted = history::load();
+
+        std::env::remove_var("ALICE_WALLET_DATA_ROOT");
+        std::env::remove_var("ALICE_WALLET_NETWORK_DISABLED");
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(app.history.len(), 500);
+        assert_eq!(persisted.len(), 500);
+        assert_eq!(
+            persisted.first().and_then(|record| record.amount),
+            Some(504)
+        );
+        assert_eq!(persisted.last().and_then(|record| record.amount), Some(5));
+    }
+
+    #[test]
     fn phase40t_materializes_owner_test_profiles_when_requested() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let Some(root) = std::env::var_os("ALICE_WALLET_PHASE40T_MATERIALIZE_ROOT")
@@ -1509,13 +1545,13 @@ impl eframe::App for AliceWalletApp {
         }
 
         match self.phase {
-            Phase::CheckWallet => self.render_loading(ctx),
-            Phase::WalletChoice => ui::unlock::render_choice(ctx, self),
-            Phase::Unlock => ui::unlock::render_unlock(ctx, self),
-            Phase::Create => ui::create::render(ctx, self),
-            Phase::Import => ui::import::render(ctx, self),
-            Phase::Backup => ui::backup::render(ctx, self),
-            Phase::Main => ui::shell::render(ctx, self),
+            Phase::CheckWallet => self.render_loading(ui_root),
+            Phase::WalletChoice => ui::unlock::render_choice(ui_root, self),
+            Phase::Unlock => ui::unlock::render_unlock(ui_root, self),
+            Phase::Create => ui::create::render(ui_root, self),
+            Phase::Import => ui::import::render(ui_root, self),
+            Phase::Backup => ui::backup::render(ui_root, self),
+            Phase::Main => ui::shell::render(ui_root, self),
         }
 
         if self.busy || self.auth_busy || self.refresh_pending > 0 {
@@ -1527,10 +1563,10 @@ impl eframe::App for AliceWalletApp {
 }
 
 impl AliceWalletApp {
-    fn render_loading(&mut self, ctx: &egui::Context) {
+    fn render_loading(&mut self, ui_root: &mut egui::Ui) {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(ui::theme::THEME.bg_base))
-            .show(ctx, |ui| {
+            .show_inside(ui_root, |ui| {
                 let rect = ui.max_rect();
                 ui::theme::paint_backdrop(ui, rect);
                 ui.vertical_centered(|ui| {

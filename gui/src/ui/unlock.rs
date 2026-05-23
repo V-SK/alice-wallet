@@ -3,10 +3,10 @@ use super::widgets::*;
 use crate::app::{AliceWalletApp, AsyncAction, Phase};
 use eframe::egui::{self, RichText};
 
-fn auth_shell<F: FnOnce(&mut egui::Ui)>(ctx: &egui::Context, content: F) {
+fn auth_shell<F: FnOnce(&mut egui::Ui)>(ui_root: &mut egui::Ui, content: F) {
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE.fill(THEME.bg_base))
-        .show(ctx, |ui| {
+        .show_inside(ui_root, |ui| {
             let rect = ui.max_rect();
             paint_backdrop(ui, rect);
             egui::ScrollArea::vertical().show(ui, |ui| {
@@ -47,8 +47,8 @@ fn auth_shell<F: FnOnce(&mut egui::Ui)>(ctx: &egui::Context, content: F) {
         });
 }
 
-pub fn render_choice(ctx: &egui::Context, app: &mut AliceWalletApp) {
-    auth_shell(ctx, |ui| {
+pub fn render_choice(ui_root: &mut egui::Ui, app: &mut AliceWalletApp) {
+    auth_shell(ui_root, |ui| {
         card_accent(ui, |ui| {
             heading(ui, "Wallet profiles");
             ui.add_space(6.0);
@@ -152,8 +152,8 @@ fn access_label(access: crate::wallet_profiles::WalletProfileAccess) -> &'static
     }
 }
 
-pub fn render_unlock(ctx: &egui::Context, app: &mut AliceWalletApp) {
-    auth_shell(ctx, |ui| {
+pub fn render_unlock(ui_root: &mut egui::Ui, app: &mut AliceWalletApp) {
+    auth_shell(ui_root, |ui| {
         card_accent(ui, |ui| {
             heading(ui, "Unlock wallet");
             ui.add_space(6.0);
