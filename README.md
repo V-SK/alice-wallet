@@ -67,6 +67,17 @@ python3 release_ops.py \
   --app-version "0.1.0"
 ```
 
+## L6 Public Release Signing Readiness
+
+L6 adds metadata-only validators for public Mac/Windows release signing
+readiness. It records Developer ID, hardened runtime, notarization, stapling,
+Gatekeeper, Authenticode, timestamp, SmartScreen, and HF-only signed-manifest
+requirements without using real credentials or executing release actions.
+
+No public release is allowed until packages are signed, notarized where
+applicable, hashes are frozen, and HF metadata is approved. See
+[`docs/L6_PUBLIC_CLIENT_RELEASE_SIGNING_READINESS.md`](docs/L6_PUBLIC_CLIENT_RELEASE_SIGNING_READINESS.md).
+
 ## Quick Start
 
 ```bash
