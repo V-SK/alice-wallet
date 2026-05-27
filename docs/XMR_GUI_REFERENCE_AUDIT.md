@@ -217,8 +217,10 @@ Important controls:
 - optional advanced P2Pool flags;
 - start and stop commands.
 
-Alice lesson: the wallet can host a mining control panel, but mining must remain
-an address-payout process, not a wallet-secret process.
+Alice lesson: the wallet can host a mining status/control panel, but Alice
+public mining must remain an Alice Rewarded Mining Mode process. Miner identity
+and signed sessions bind work to Alice's collection address; the wallet must not
+ask the miner to enter collection routing or expose wallet-secret material.
 
 ### P2Pool manager
 
@@ -233,16 +235,17 @@ external miner-like helper:
 - write/read local status JSON;
 - stop the helper and remove transient stats.
 
-The start command uses address-only payout:
+The upstream reference starts from an address-only payout model:
 
 - `--wallet <address>`
 - `--start-mining <threads>`
 - `--local-api`
 - `--data-api <stats-dir>`
 
-Alice lesson: this is the closest reference for Alice one-click mining. The
-wallet should start an Alice miner process with a payout address, read structured
-status, and stop only the process it owns.
+Alice lesson: this is useful only as a process-control reference. Alice should
+read structured miner status and stop only the process it owns, while payout
+routing remains controlled by the Alice signed mining session rather than a
+wallet-entered address.
 
 ### Receive, address, account, and recovery surfaces
 
@@ -259,7 +262,7 @@ The relevant QML pages show a mature wallet lifecycle:
 
 Alice lesson: even if Alice starts with one account address, it still needs
 receive-request history, labels, and explicit privacy warnings around address
-reuse and public miner payout addresses.
+reuse and public miner identities.
 
 ## Product Structure To Copy
 
@@ -279,7 +282,8 @@ Copy the structure, not the code or visual skin:
 
 4. Miner manager
    Owns mining binary discovery, checksum/signature verification, process
-   lifecycle, sanitized logs, hashrate/status, and payout address configuration.
+   lifecycle, sanitized logs, hashrate/status, and signed-session collection
+   address display.
 
 5. GUI shell
    Shows wallet state first: balance, sync trust, node profile, receive, send,
@@ -292,12 +296,12 @@ Copy the structure, not the code or visual skin:
 ## Alice One-Click Mining Design
 
 Alice should not require miners to store wallet secrets. The wallet should only
-provide a payout address and an operator control plane.
+provide miner identity/session status and an operator control plane.
 
 Target module shape:
 
 - `MinerProfile`: disabled, local CPU, local GPU, pool/remote worker if supported.
-- `MinerConfig`: payout address, binary path, endpoint/pool URL, thread or device
+- `MinerConfig`: signed session collection address, binary path, endpoint/pool URL, thread or device
   limit, intensity, data directory, battery policy, autostart preference.
 - `MinerStatus`: not installed, verifying, ready, starting, running, stopping,
   stopped, error.
@@ -311,13 +315,14 @@ Safety rules:
 
 - The miner command must never include mnemonic, seed, private key, wallet
   password, or decrypted signing material.
-- Changing the payout address requires an unlocked wallet or explicit manual
-  address entry plus validation.
+- Local collection-routing overrides are rejected; routing must come from a
+  valid Alice signed mining session.
 - Starting mining from a newly created unbacked wallet should be blocked or
   require a strong backup-first confirmation.
 - Solo/local mining should require the local node profile to be running and
   synced, unless the selected mining backend explicitly does not need it.
-- Pool/remote mining should show a payment-trust warning.
+- Pool/remote mining should require Alice Rewarded Mining Mode and show the
+  collection-address trust boundary.
 - Downloaded miner binaries must be checksum or signature verified before use.
 - The GUI must stop only the process it owns, using a saved child process handle
   or PID file, not broad `pkill` behavior.
@@ -344,7 +349,8 @@ Recommended first Alice mining slice:
 - Use structured status JSON or RPC rather than parsing human console text where
   possible.
 - Keep warnings short and actionable: "balance stale", "node lagged by N blocks",
-  "mining needs local synced node", "payout address is public".
+  "mining needs local synced node", "collection address comes from signed
+  session".
 - Keep mining available as an operator tool, not a custody requirement.
 
 ## RED-First Mining Tests
@@ -354,8 +360,8 @@ Recommended first Alice mining slice:
 - RED: start is blocked when the miner binary is missing or unverified.
 - RED: checksum mismatch leaves the installed miner disabled.
 - RED: local solo mining is blocked when local node is disconnected or unsynced.
-- RED: remote/pool mining displays a trust/payment warning before first start.
-- RED: changing payout address is blocked while wallet is locked.
+- RED: remote/pool mining requires Alice Rewarded Mining Mode before first start.
+- RED: local collection-routing override is rejected.
 - RED: start from an unbacked new wallet is blocked or requires explicit
   backup-first confirmation according to policy.
 - RED: stop kills only the owned miner process.
@@ -368,4 +374,4 @@ The one-click mining feature should be built, but as a separate
 `MinerManager`/`MiningPage` lane under LAUNCH-A. It should sit beside wallet and
 node state, not inside signing code. The first successful milestone is not "mine
 a block from the GUI"; it is "prove the GUI can start, monitor, and stop a miner
-with only a payout address, while wallet custody remains sealed."
+with only a signed miner session, while wallet custody remains sealed."

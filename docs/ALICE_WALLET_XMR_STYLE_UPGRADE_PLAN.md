@@ -13,7 +13,7 @@ Upgrade Alice Wallet from a usable native desktop wallet into a self-custody wal
 - sync and trust state are honest before balance or send actions are presented as safe;
 - create, encrypt, back up, restore, migrate, and rescan flows are complete;
 - receiving, labels, request history, and local transaction history are understandable;
-- one-click mining is available as an address-payout operator tool without exposing wallet secrets;
+- one-click mining is available as an Alice signed-session operator tool without exposing wallet secrets;
 - private material is hidden by default and every sensitive export or signing path is gated.
 
 The target is not a decorative wallet. The target is a wallet users can understand under stress: what is safe, what is stale, what can be rebuilt, and what is unrecoverable if lost.
@@ -56,7 +56,9 @@ The product lessons Alice should copy are structural:
 - QML tracks daemon sync and wallet sync separately.
 - local and remote node switching re-initializes wallet connectivity and updates action availability.
 - mining is a separate page and manager surface, gated by daemon readiness and local/remote warnings.
-- P2Pool-style mining uses address-only payout, binary installation/checksum checks, structured status, and explicit start/stop.
+- P2Pool-style mining is only a process-management reference; Alice mining uses
+  signed sessions, Alice collection-address routing, binary installation/checksum
+  checks, structured status, and explicit start/stop.
 
 The product lessons Alice should not copy blindly:
 
@@ -79,7 +81,9 @@ The product lessons Alice should not copy blindly:
    Locked, read-only, offline, stale, or backup-incomplete states must not silently sign.
 
 5. Miner safety remains separate.
-   Miner machines should be able to run with an address only. The desktop wallet is for custody and operator decisions, not a requirement for mining hot keys.
+   Miner machines should be able to run with a signed Alice mining session. The
+   desktop wallet is for custody and operator decisions, not a requirement for
+   mining hot keys or collection-routing entry.
 
 6. Mining is an operator workflow, not a signing workflow.
    Starting or monitoring a miner must never require a seed, private key, wallet password, or decrypted signing material to cross into the miner process.
@@ -134,14 +138,15 @@ Introduce `MinerProfile`, `MinerConfig`, `MinerStatus`, `MinerStats`, and a
 Miner profiles:
 
 - Disabled: no mining controls except setup.
-- Local CPU: start a local miner process with a payout address and thread limit.
+- Local CPU: start a local miner process with a signed Alice mining session and thread limit.
 - Local GPU: start a configured GPU miner profile when supported.
-- Pool / remote worker: connect to a pool or remote mining endpoint when supported, with a payout-trust warning.
+- Pool / remote worker: connect only through Alice Rewarded Mining Mode when
+  supported; Direct Pool Mode and miner payout override remain forbidden.
 
 Miner status should expose:
 
 - installed / missing / unverified binary state;
-- selected payout address;
+- signed-session collection address;
 - start readiness and the reason if blocked;
 - process state and owned PID or child handle;
 - hashrate;
@@ -154,11 +159,11 @@ Miner status should expose:
 Mining action gates:
 
 - miner binary must be installed and verified;
-- payout address must be valid;
-- changing payout address requires unlock or explicit manual address validation;
+- signed-session collection address must match Alice server authority;
+- local collection-routing override is rejected; collection routing is session-bound;
 - unbacked newly-created wallet cannot silently start mining;
 - local solo mining requires local node readiness if the backend depends on it;
-- remote/pool mining requires an explicit trust/payment warning before first start;
+- remote/pool mining requires an Alice Rewarded Mining Mode session before first start;
 - miner command line must never include mnemonic, private key, wallet password, or decrypted signing material.
 
 ### 3. Sync And Rescan
@@ -202,7 +207,9 @@ Add a receive-request model:
 - QR display;
 - copy status.
 
-Alice may not need Monero-style subaddresses on day one. The first useful step is clean request labeling and history, with explicit privacy guidance around address reuse and public payout addresses.
+Alice may not need Monero-style subaddresses on day one. The first useful step
+is clean request labeling and history, with explicit privacy guidance around
+address reuse and public miner identities.
 
 ### 6. GUI Information Architecture
 
@@ -229,8 +236,8 @@ Send should be disabled or downgraded when:
 
 Mining should be visible but gated when:
 
-- wallet has no valid payout address;
-- payout address is being changed while wallet is locked;
+- wallet has no valid signed mining session;
+- local collection-routing override is requested;
 - miner binary is missing or unverified;
 - local node is required but disconnected or unsynced;
 - backup is incomplete and policy requires backup before first miner start;
@@ -295,8 +302,8 @@ Batch 7: One-Click Mining
 - RED: miner start is blocked when the binary is missing, unsigned, or checksum-unverified.
 - RED: checksum mismatch leaves the miner disabled and does not mutate wallet state.
 - RED: local solo mining is blocked when the required local node is disconnected or unsynced.
-- RED: remote/pool mining displays a trust/payment warning before first start.
-- RED: changing payout address is blocked while the wallet is locked.
+- RED: remote/pool mining requires Alice Rewarded Mining Mode before first start.
+- RED: local collection-routing override is rejected.
 - RED: unbacked newly-created wallet cannot silently start mining.
 - RED: miner stop targets only the process owned by Alice Wallet.
 - RED: miner crash reports error status without locking or corrupting the wallet.
