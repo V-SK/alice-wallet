@@ -73,6 +73,8 @@ L6 adds metadata-only validators for public Mac/Windows release signing
 readiness. It records Developer ID, hardened runtime, notarization, stapling,
 Gatekeeper, Authenticode, timestamp, SmartScreen, and HF-only signed-manifest
 requirements without using real credentials or executing release actions.
+The manifest validator also requires per-package redacted signing evidence
+before any release-ready claim can pass.
 
 No public release is allowed until packages are signed, notarized where
 applicable, hashes are frozen, and HF metadata is approved. See

@@ -66,6 +66,15 @@ class L6PublicReleaseSigningReadinessTests(unittest.TestCase):
                 ("windows-x64", "installer"),
             },
         )
+        for item in manifest["packages"]:
+            self.assertEqual(
+                item["signing_evidence"]["schema"],
+                "alice.wallet.l6.package_signing_evidence.v1",
+            )
+            self.assertTrue(item["signing_evidence"]["operator_evidence_ref"])
+            self.assertTrue(
+                all(check["passed"] for check in item["signing_evidence"]["verification_checks"])
+            )
 
     def test_missing_credentials_fail_closed_even_with_valid_manifest_metadata(self):
         manifest = load_fixture("l6_signed_manifest_metadata.valid.json")
@@ -98,6 +107,22 @@ class L6PublicReleaseSigningReadinessTests(unittest.TestCase):
 
         manifest = load_fixture("l6_signed_manifest_metadata.valid.json")
         manifest["packages"][0]["hash_frozen"] = False
+        with self.assertRaises(l6.L6ReleaseSigningReadinessError):
+            l6.validate_signed_manifest_metadata(manifest, require_release_ready=True)
+
+    def test_release_ready_manifest_requires_per_package_signing_evidence(self):
+        manifest = load_fixture("l6_signed_manifest_metadata.valid.json")
+        manifest["packages"][0]["signing_evidence"]["verification_checks"][0]["passed"] = False
+        with self.assertRaises(l6.L6ReleaseSigningReadinessError):
+            l6.validate_signed_manifest_metadata(manifest, require_release_ready=True)
+
+        manifest = load_fixture("l6_signed_manifest_metadata.valid.json")
+        manifest["packages"][2]["signing_evidence"]["operator_evidence_ref"] = l6.PLACEHOLDER
+        with self.assertRaises(l6.L6ReleaseSigningReadinessError):
+            l6.validate_signed_manifest_metadata(manifest, require_release_ready=True)
+
+        manifest = load_fixture("l6_signed_manifest_metadata.valid.json")
+        manifest["packages"][3]["signing_evidence"]["verification_checks"][0]["evidence_log_sha256"] = "not-a-sha"
         with self.assertRaises(l6.L6ReleaseSigningReadinessError):
             l6.validate_signed_manifest_metadata(manifest, require_release_ready=True)
 
@@ -135,6 +160,7 @@ class L6PublicReleaseSigningReadinessTests(unittest.TestCase):
                 "l6_signed_manifest_template.json",
                 "l6_missing_credentials_fail_closed.json",
                 "l6_public_release_gate_fail_closed.json",
+                "l6_owner_signing_checklist.json",
                 "l6_release_signing_readiness_summary.json",
                 "L6_PUBLIC_CLIENT_RELEASE_SIGNING_READINESS.md",
             }
@@ -146,6 +172,11 @@ class L6PublicReleaseSigningReadinessTests(unittest.TestCase):
             gate = json.loads((out_dir / "l6_public_release_gate_fail_closed.json").read_text())
             self.assertFalse(gate["metadata_ready"])
             self.assertFalse(gate["release_execution_allowed"])
+
+            checklist = json.loads((out_dir / "l6_owner_signing_checklist.json").read_text())
+            self.assertTrue(checklist["descriptor_ready_for_owner_review"])
+            self.assertFalse(checklist["owner_signing_environment_ready"])
+            self.assertFalse(checklist["public_release_ready"])
 
 
 if __name__ == "__main__":

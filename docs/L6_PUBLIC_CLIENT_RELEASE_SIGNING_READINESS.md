@@ -122,11 +122,47 @@ manifest must include:
 - SHA-256, byte size, version, channel, and HF path per package;
 - `hash_frozen=true` per package and `hashes_frozen=true` at manifest level;
 - `hf_metadata_approved=true`;
+- `signing_evidence` per package using schema
+  `alice.wallet.l6.package_signing_evidence.v1`;
 - manifest signature metadata.
+
+Per-package signing evidence must be redacted metadata only. It records an
+operator evidence reference plus SHA-256 hashes of validation logs, not raw
+certificates, private keys, Apple credentials, Microsoft credentials, command
+stdout, or local machine paths.
+
+Required evidence checks:
+
+- macOS `.dmg`: strict codesign verify, entitlement dump review, hardened
+  runtime review, accepted notarization result, stapler validation, and
+  Gatekeeper execute assessment.
+- macOS `.pkg`: app strict codesign verify, entitlement dump review, hardened
+  runtime review, package signature verification, install assessment, accepted
+  notarization result, stapler validation, and installed-app Gatekeeper
+  assessment.
+- Windows executable and installer: `signtool verify /pa /tw`, PowerShell
+  Authenticode status `Valid`, timestamp verification, and publisher identity
+  review.
 
 The validator intentionally does not load private signing material. Missing Mac
 Developer ID refs, Mac notary profile refs, Windows Authenticode refs, Windows
 timestamp refs, or manifest-signing key refs fail closed.
+
+## Ready for Owner Signing Checklist
+
+`l6_owner_signing_checklist.json` is generated for owner review. It remains
+`owner_signing_environment_ready=false` and `public_release_ready=false` until a
+real owner signing environment supplies:
+
+- Mac Developer ID Application, Developer ID Installer, and notary profile refs.
+- Windows Authenticode certificate and timestamp service refs.
+- Release manifest key/signature refs.
+- Per-package verification evidence bundle refs and redacted validation log
+  SHA-256 values.
+- HF repo/path approval for every shipped artifact.
+
+This checklist is a handoff contract for the owner signing environment. It is
+not authority to sign, notarize, upload, publish, or open downloads.
 
 Example metadata-only validation:
 
