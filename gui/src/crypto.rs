@@ -1,5 +1,5 @@
 use crate::config;
-use aes_gcm::aead::{Aead, KeyInit};
+use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::Aes256Gcm;
 use argon2::{Algorithm, Argon2, Params, Version};
 use base64::{engine::general_purpose::STANDARD as b64, Engine};
@@ -13,16 +13,24 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use subxt_signer::sr25519::Keypair as Sr25519Keypair;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 pub const MIN_LEGACY_PBKDF2_ITERATIONS: u32 = 200_000;
-pub const ARGON2_ITERATIONS: u32 = 2;
+// Argon2id time cost (t) for NEW wallets. Decryption uses the per-wallet KDF
+// params stored in `WalletPayload` (see `derive_wallet_key`), so bumping this
+// only strengthens newly created/upgraded wallets; existing wallets that were
+// written with t=2 still unlock using their stored `kdf_iterations`.
+pub const ARGON2_ITERATIONS: u32 = 3;
 pub const ARGON2_MEMORY_KIB: u32 = 19_456;
 pub const ARGON2_PARALLELISM: u32 = 1;
 pub const SS58_FORMAT: u16 = 300;
 pub const WALLET_VERSION_V2: u32 = 2;
 pub const WALLET_VERSION_V3: u32 = 3;
-pub const CURRENT_WALLET_VERSION: u32 = WALLET_VERSION_V3;
+// v4 binds AES-GCM associated data (wallet version + address) to every
+// ciphertext. v2/v3 wallets were written without AAD and must keep decrypting
+// without it; see `aad_for_payload` for the version gate.
+pub const WALLET_VERSION_V4: u32 = 4;
+pub const CURRENT_WALLET_VERSION: u32 = WALLET_VERSION_V4;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct WalletPayload {
@@ -74,6 +82,17 @@ impl Drop for SecretSeed {
 pub struct WalletSecrets {
     pub address: String,
     seed: Option<Arc<SecretSeed>>,
+}
+
+impl Drop for WalletSecrets {
+    fn drop(&mut self) {
+        // The 32-byte secret seed lives behind `Arc<SecretSeed>` and is wiped by
+        // `SecretSeed::drop` only when the last clone is released, so we must NOT
+        // reach through the `Arc` here. We do zeroize the non-`Arc` `address`
+        // string on every drop (defense-in-depth): each clone owns its own
+        // `String` allocation, so wiping it cannot corrupt sibling clones.
+        self.address.zeroize();
+    }
 }
 
 impl WalletSecrets {
@@ -180,13 +199,19 @@ pub fn write_wallet_payload(path: &Path, payload: &WalletPayload) -> Result<(), 
 }
 
 pub fn unlock_wallet(payload: &WalletPayload, password: &str) -> Result<UnlockOutcome, String> {
-    if !matches!(payload.version, WALLET_VERSION_V2 | WALLET_VERSION_V3) {
+    if !matches!(
+        payload.version,
+        WALLET_VERSION_V2 | WALLET_VERSION_V3 | WALLET_VERSION_V4
+    ) {
         return Err(format!("Unsupported wallet version: {}", payload.version));
     }
 
     let salt = b64.decode(&payload.salt).map_err(|_| "Invalid salt")?;
+    // AAD is derived from the stored version+address: empty for pre-v4 wallets
+    // (so legacy ciphertexts still decrypt), bound for v4+.
+    let aad = aad_for_payload(payload.version, &payload.address);
     let mut key = derive_wallet_key(payload, password, &salt)?;
-    let seed_bytes = decrypt_blob(&payload.encrypted_seed, &payload.nonce_seed, &key)?;
+    let seed_bytes = decrypt_blob(&payload.encrypted_seed, &payload.nonce_seed, &key, &aad)?;
 
     let seed = SecretSeed::from_slice(&seed_bytes)?;
     let keypair = Sr25519Keypair::from_secret_key(*seed.expose()).map_err(|e| e.to_string())?;
@@ -195,7 +220,7 @@ pub fn unlock_wallet(payload: &WalletPayload, password: &str) -> Result<UnlockOu
     if let (Some(enc_mnemonic), Some(nonce_mnemonic)) =
         (&payload.encrypted_mnemonic, &payload.nonce_mnemonic)
     {
-        let mut decrypted = decrypt_blob(enc_mnemonic, nonce_mnemonic, &key)?;
+        let mut decrypted = decrypt_blob(enc_mnemonic, nonce_mnemonic, &key, &aad)?;
         let mnemonic =
             std::str::from_utf8(&decrypted).map_err(|_| "Mnemonic is not valid UTF-8")?;
         let mnemonic_pair = keypair_from_phrase(mnemonic)?;
@@ -286,12 +311,14 @@ fn create_wallet_payload_from_keypair(
         ARGON2_MEMORY_KIB,
         ARGON2_PARALLELISM,
     )?;
-    let (encrypted_seed, nonce_seed) = encrypt_blob(seed_bytes, &key)?;
+    let address = account_id_to_ss58(&keypair.public_key().0, SS58_FORMAT);
+    let aad = aad_for_payload(CURRENT_WALLET_VERSION, &address);
+    let (encrypted_seed, nonce_seed) = encrypt_blob(seed_bytes, &key, &aad)?;
     key.zeroize();
 
     Ok(WalletPayload {
         version: CURRENT_WALLET_VERSION,
-        address: account_id_to_ss58(&keypair.public_key().0, SS58_FORMAT),
+        address,
         public_key: format!("0x{}", hex::encode(keypair.public_key().0)),
         encrypted_seed,
         encrypted_mnemonic: None,
@@ -351,19 +378,39 @@ fn derive_argon2id_key(
     Ok(key)
 }
 
-fn encrypt_blob(plaintext: &[u8], key: &[u8; 32]) -> Result<(String, String), String> {
+/// Build the AES-GCM associated data (AAD) for a wallet of the given version.
+///
+/// Backward-compat gate: wallets written before v4 were encrypted with no AAD,
+/// so they must keep decrypting with an empty AAD (which is byte-identical to
+/// "no AAD" in AES-GCM). From v4 onward we bind the wallet version and address
+/// into the AAD so a ciphertext cannot be silently relocated onto a different
+/// wallet identity or version without authentication failing.
+fn aad_for_payload(version: u32, address: &str) -> Vec<u8> {
+    if version >= WALLET_VERSION_V4 {
+        format!("alice-wallet:v{}:{}", version, address).into_bytes()
+    } else {
+        Vec::new()
+    }
+}
+
+fn encrypt_blob(plaintext: &[u8], key: &[u8; 32], aad: &[u8]) -> Result<(String, String), String> {
     let mut nonce_bytes = [0u8; 12];
     rand::thread_rng().fill_bytes(&mut nonce_bytes);
 
     let cipher = Aes256Gcm::new(key.into());
     let ciphertext = cipher
-        .encrypt(&nonce_bytes.into(), plaintext)
+        .encrypt(&nonce_bytes.into(), Payload { msg: plaintext, aad })
         .map_err(|e| format!("encryption failure: {}", e))?;
 
     Ok((b64.encode(&ciphertext), b64.encode(&nonce_bytes)))
 }
 
-fn decrypt_blob(ciphertext_b64: &str, nonce_b64: &str, key: &[u8; 32]) -> Result<Vec<u8>, String> {
+fn decrypt_blob(
+    ciphertext_b64: &str,
+    nonce_b64: &str,
+    key: &[u8; 32],
+    aad: &[u8],
+) -> Result<Vec<u8>, String> {
     let ciphertext = b64
         .decode(ciphertext_b64)
         .map_err(|_| "Invalid base64 in ciphertext")?;
@@ -376,7 +423,13 @@ fn decrypt_blob(ciphertext_b64: &str, nonce_b64: &str, key: &[u8; 32]) -> Result
 
     let cipher = Aes256Gcm::new(key.into());
     cipher
-        .decrypt(nonce_bytes.as_slice().into(), ciphertext.as_ref())
+        .decrypt(
+            nonce_bytes.as_slice().into(),
+            Payload {
+                msg: ciphertext.as_ref(),
+                aad,
+            },
+        )
         .map_err(|_| "Decryption failed (wrong password or corrupted)".into())
 }
 
@@ -462,9 +515,15 @@ fn keypair_from_phrase(mnemonic: &str) -> Result<Sr25519Keypair, String> {
 
 fn substrate_seed_from_phrase(mnemonic: &str) -> Result<[u8; 32], String> {
     let mnemonic = bip39::Mnemonic::parse(mnemonic).map_err(|e| e.to_string())?;
-    let (entropy, len) = mnemonic.to_entropy_array();
-    let seed64 = substrate_bip39::seed_from_entropy(&entropy[..len], "")
-        .map_err(|e| format!("Failed to derive seed from mnemonic entropy: {:?}", e))?;
+    let (entropy_array, len) = mnemonic.to_entropy_array();
+    // The raw BIP-39 entropy and the full 64-byte derived seed are both highly
+    // sensitive. Wrap them in `Zeroizing` so they are wiped on scope exit
+    // (including on the early-return error path), not just the 32-byte slice.
+    let entropy = Zeroizing::new(entropy_array);
+    let seed64 = Zeroizing::new(
+        substrate_bip39::seed_from_entropy(&entropy[..len], "")
+            .map_err(|e| format!("Failed to derive seed from mnemonic entropy: {:?}", e))?,
+    );
     let mut secret = [0u8; 32];
     secret.copy_from_slice(&seed64[..32]);
     Ok(secret)
@@ -536,6 +595,101 @@ mod tests {
     }
 
     #[test]
+    fn new_wallets_are_v4_and_bind_address_aad() {
+        let phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        let payload = create_wallet_payload(phrase, "correct horse battery staple").unwrap();
+
+        // New wallets are written at the AAD-binding version and round-trip.
+        assert_eq!(payload.version, WALLET_VERSION_V4);
+        let unlocked = unlock_wallet(&payload, "correct horse battery staple").unwrap();
+        assert_eq!(unlocked.secrets.address, payload.address);
+        // A correctly-formed v4 wallet does not need a further upgrade.
+        assert!(unlock_wallet(&payload, "correct horse battery staple")
+            .unwrap()
+            .upgraded_payload
+            .is_none());
+
+        // The seed ciphertext is bound to (version, address) via AAD: relocating
+        // it onto a different address must fail authentication even with the
+        // correct password, instead of silently decrypting.
+        let mut tampered = payload.clone();
+        tampered.address = qa_display_address_variant(0xAB);
+        match unlock_wallet(&tampered, "correct horse battery staple") {
+            Ok(_) => panic!("AAD mismatch must reject decryption"),
+            Err(err) => assert!(err.contains("Decryption failed"), "unexpected error: {err}"),
+        }
+    }
+
+    #[test]
+    fn aad_is_empty_for_legacy_versions_and_bound_for_v4() {
+        assert!(aad_for_payload(WALLET_VERSION_V2, "addr").is_empty());
+        assert!(aad_for_payload(WALLET_VERSION_V3, "addr").is_empty());
+        assert!(!aad_for_payload(WALLET_VERSION_V4, "addr").is_empty());
+        // The bound AAD distinguishes different addresses.
+        assert_ne!(
+            aad_for_payload(WALLET_VERSION_V4, "addr-a"),
+            aad_for_payload(WALLET_VERSION_V4, "addr-b")
+        );
+    }
+
+    #[test]
+    fn unlocks_argon2_wallet_written_with_old_t2_iterations() {
+        // Regression guard for the ARGON2_ITERATIONS 2 -> 3 bump: a v3 wallet
+        // that was encrypted with the *old* t=2 cost must still decrypt, because
+        // decryption derives the key from the per-wallet stored kdf_iterations,
+        // not from the (now higher) ARGON2_ITERATIONS constant.
+        const OLD_ARGON2_ITERATIONS: u32 = 2;
+        assert_ne!(
+            OLD_ARGON2_ITERATIONS, ARGON2_ITERATIONS,
+            "test must use the pre-bump cost"
+        );
+
+        let phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        let seed_bytes = substrate_seed_from_phrase(phrase).unwrap();
+        let keypair = Sr25519Keypair::from_secret_key(seed_bytes).unwrap();
+
+        let mut salt = [0u8; 32];
+        salt.copy_from_slice(&[9u8; 32]);
+        let mut key = derive_argon2id_key(
+            "correct horse battery staple",
+            &salt,
+            OLD_ARGON2_ITERATIONS,
+            ARGON2_MEMORY_KIB,
+            ARGON2_PARALLELISM,
+        )
+        .unwrap();
+        // v3 wallets predate AAD, so encrypt with an empty AAD to mirror real data.
+        let (encrypted_seed, nonce_seed) = encrypt_blob(&seed_bytes, &key, &[]).unwrap();
+        key.zeroize();
+
+        let payload = WalletPayload {
+            version: WALLET_VERSION_V3,
+            address: account_id_to_ss58(&keypair.public_key().0, SS58_FORMAT),
+            public_key: format!("0x{}", hex::encode(keypair.public_key().0)),
+            encrypted_seed,
+            encrypted_mnemonic: None,
+            salt: b64.encode(salt),
+            nonce_seed,
+            nonce_mnemonic: None,
+            kdf: "argon2id".into(),
+            kdf_iterations: OLD_ARGON2_ITERATIONS,
+            kdf_memory_kib: Some(ARGON2_MEMORY_KIB),
+            kdf_parallelism: Some(ARGON2_PARALLELISM),
+        };
+
+        let unlocked = unlock_wallet(&payload, "correct horse battery staple").unwrap();
+        assert_eq!(unlocked.secrets.address, payload.address);
+        // The old t=2 params now differ from the bumped default, so the wallet
+        // is transparently re-encrypted with the stronger cost on unlock.
+        let upgraded = unlocked
+            .upgraded_payload
+            .expect("old t=2 wallet should request an upgrade to the new cost");
+        assert_eq!(upgraded.kdf_iterations, ARGON2_ITERATIONS);
+        // And the upgraded payload must itself still decrypt.
+        assert!(unlock_wallet(&upgraded, "correct horse battery staple").is_ok());
+    }
+
+    #[test]
     fn unlocks_legacy_wallet_and_requests_upgrade() {
         let phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
         let seed_bytes = substrate_seed_from_phrase(phrase).unwrap();
@@ -543,8 +697,10 @@ mod tests {
         let mut salt = [0u8; 32];
         salt.copy_from_slice(&[7u8; 32]);
         let key = derive_pbkdf2_key("password123", &salt, LEGACY_PBKDF2_ITERATIONS);
-        let (encrypted_seed, nonce_seed) = encrypt_blob(&seed_bytes, &key).unwrap();
-        let (encrypted_mnemonic, nonce_mnemonic) = encrypt_blob(phrase.as_bytes(), &key).unwrap();
+        // Legacy v2 wallets were written without AAD.
+        let (encrypted_seed, nonce_seed) = encrypt_blob(&seed_bytes, &key, &[]).unwrap();
+        let (encrypted_mnemonic, nonce_mnemonic) =
+            encrypt_blob(phrase.as_bytes(), &key, &[]).unwrap();
 
         let payload = WalletPayload {
             version: WALLET_VERSION_V2,

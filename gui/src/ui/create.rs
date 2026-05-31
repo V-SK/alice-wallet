@@ -55,9 +55,12 @@ pub fn render(ui_root: &mut egui::Ui, app: &mut AliceWalletApp) {
                                     } else {
                                         use bip39::Mnemonic;
                                         use rand::RngCore;
-                                        let mut entropy = [0u8; 32];
-                                        rand::thread_rng().fill_bytes(&mut entropy);
-                                        let mnemonic = Mnemonic::from_entropy(&entropy).expect("32 bytes -> mnemonic");
+                                        use zeroize::Zeroizing;
+                                        // Hold the raw entropy in a zeroizing buffer so it is wiped
+                                        // when this scope exits rather than lingering on the stack.
+                                        let mut entropy = Zeroizing::new([0u8; 32]);
+                                        rand::thread_rng().fill_bytes(entropy.as_mut());
+                                        let mnemonic = Mnemonic::from_entropy(entropy.as_ref()).expect("32 bytes -> mnemonic");
                                         let phrase = mnemonic.words().collect::<Vec<&str>>().join(" ");
                                         match app.begin_profile_create() {
                                             Ok(_) => {

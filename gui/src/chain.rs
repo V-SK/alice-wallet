@@ -18,7 +18,30 @@ pub const ALICE_APPROVED_RUNTIME_SPEC_VERSIONS: [u32; 1] = [108];
 
 pub type Client = OnlineClient<PolkadotConfig>;
 
+/// Enforce that a node URL uses TLS-protected WebSockets (`wss://`) only.
+///
+/// subxt's own `from_url` helpers treat plain `ws://` to a loopback host as
+/// "secure" (the localhost exception). For a wallet that signs transactions we
+/// require transport encryption on every connection regardless of host, so we
+/// reject anything that is not `wss://` (notably plain `ws://`, `http://` and
+/// `https://`) before we ever attempt to connect.
+fn require_wss_url(url: &str) -> Result<(), String> {
+    let trimmed = url.trim();
+    let scheme_is_wss = trimmed
+        .split_once("://")
+        .map(|(scheme, _)| scheme.eq_ignore_ascii_case("wss"))
+        .unwrap_or(false);
+    if scheme_is_wss {
+        Ok(())
+    } else {
+        Err("Node URL must use wss:// (encrypted WebSocket); insecure schemes are rejected".into())
+    }
+}
+
 pub async fn get_client(url: &str) -> Result<Client, String> {
+    require_wss_url(url)?;
+    // `from_url` (not `from_insecure_url`) performs subxt's own TLS/secure-URL
+    // validation in addition to our wss-only guard above.
     OnlineClient::<PolkadotConfig>::from_url(url)
         .await
         .map_err(|e| format!("Failed to connect to node: {:?}", e))
@@ -377,7 +400,22 @@ fn fail_closed(
 pub async fn fetch_node_sync_snapshot(rpc_url: &str) -> NodeSyncSnapshot {
     let sync_mode = sync_mode_from_url(rpc_url);
     let observed_at_unix = chrono::Utc::now().timestamp();
-    let rpc = match RpcClient::from_insecure_url(rpc_url).await {
+    if let Err(reason) = require_wss_url(rpc_url) {
+        return evaluate_node_sync(NodeSyncEvidence {
+            sync_mode,
+            connected: false,
+            chain_identity: None,
+            current_height: None,
+            target_height: None,
+            peers_count: None,
+            last_updated_unix: None,
+            observed_at_unix,
+            error: Some(format!("insecure_url_rejected: {}", reason)),
+        });
+    }
+    // `from_url` (not `from_insecure_url`) validates the URL is TLS-protected
+    // before opening the connection, matching our wss-only guard above.
+    let rpc = match RpcClient::from_url(rpc_url).await {
         Ok(rpc) => rpc,
         Err(e) => {
             return evaluate_node_sync(NodeSyncEvidence {
@@ -530,6 +568,23 @@ mod tests {
         assert!(!PAYOUT_ALLOWED);
         assert!(!SETTLEMENT_ALLOWED);
         assert!(!MINT_ALLOWED);
+    }
+
+    #[test]
+    fn require_wss_url_accepts_only_wss() {
+        assert!(require_wss_url("wss://rpc.aliceprotocol.org").is_ok());
+        assert!(require_wss_url("WSS://rpc.aliceprotocol.org").is_ok());
+        assert!(require_wss_url("  wss://rpc.aliceprotocol.org  ").is_ok());
+
+        // Insecure / non-wss schemes must be rejected, including loopback ws://
+        // which subxt would otherwise accept under its localhost exception.
+        assert!(require_wss_url("ws://rpc.aliceprotocol.org").is_err());
+        assert!(require_wss_url("ws://127.0.0.1:9944").is_err());
+        assert!(require_wss_url("ws://localhost:9944").is_err());
+        assert!(require_wss_url("http://rpc.aliceprotocol.org").is_err());
+        assert!(require_wss_url("https://rpc.aliceprotocol.org").is_err());
+        assert!(require_wss_url("rpc.aliceprotocol.org").is_err());
+        assert!(require_wss_url("").is_err());
     }
 
     #[test]

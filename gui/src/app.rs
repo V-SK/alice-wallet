@@ -1627,7 +1627,7 @@ impl AliceWalletApp {
                 self.pick_backup_quiz();
                 self.phase = Phase::Backup;
                 self.auth_error = match save_result {
-                    Ok(_) => match self.finalize_pending_profile(secrets.address) {
+                    Ok(_) => match self.finalize_pending_profile(secrets.address.clone()) {
                         Ok(_) => String::new(),
                         Err(e) => e,
                     },
