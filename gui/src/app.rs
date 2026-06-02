@@ -3,6 +3,9 @@ use crate::config::{Lang, Settings};
 use crate::crypto::{self, WalletPayload, WalletSecrets};
 use crate::history::{self, TxRecord};
 use crate::i18n;
+use crate::node::{self, NodeMode};
+use crate::supervise::node_supervisor::NodeSupervisor;
+use crate::supervise::ProcStatus;
 use crate::ui;
 use crate::wallet_profiles::{
     self, AddressBookRecord, ReceiveRequestRecord, WalletProfileAccess, WalletProfileManager,
@@ -28,6 +31,7 @@ pub enum Page {
     Receive,
     Send,
     Mining,
+    Node,
     History,
     Accounts,
     AddressBook,
@@ -97,6 +101,16 @@ pub enum AsyncAction {
     Create(String, String),
     Import(String, String, std::path::PathBuf),
     ImportSeedHex(String, String, std::path::PathBuf),
+    /// Start the embedded node from a validated launch plan + child env + pid file.
+    StartNode(
+        node::NodeLaunchPlan,
+        Vec<(String, String)>,
+        std::path::PathBuf,
+    ),
+    /// Request a graceful stop of the embedded node.
+    StopNode,
+    /// Poll the embedded node's process status into the GUI.
+    PollNodeProc,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,6 +130,10 @@ pub enum AsyncResult {
     ImportOk(WalletPayload, WalletSecrets, Option<std::path::PathBuf>),
     CreateErr(String),
     SyncErr(String),
+    /// Latest embedded-node process status snapshot.
+    NodeProc(ProcStatus),
+    /// A node start/stop request failed before it could be supervised.
+    NodeProcErr(String),
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -188,6 +206,11 @@ pub struct AliceWalletApp {
     pub refresh_pending: usize,
     pub last_interaction: Instant,
 
+    // embedded node
+    pub node_supervisor: NodeSupervisor,
+    pub node_proc: ProcStatus,
+    pub last_node_proc_poll: Option<Instant>,
+
     // async
     pub tx: Sender<AsyncAction>,
     pub rx: Receiver<AsyncResult>,
@@ -219,7 +242,8 @@ impl AliceWalletApp {
         let (worker_tx, gui_rx) = channel::<AsyncResult>();
 
         let rt = Arc::new(rt);
-        spawn_worker(rt.clone(), worker_rx, worker_tx);
+        let node_supervisor = NodeSupervisor::new();
+        spawn_worker(rt.clone(), worker_rx, worker_tx, node_supervisor.clone());
 
         let mut app = Self {
             qa_mock_mode,
@@ -275,6 +299,9 @@ impl AliceWalletApp {
             auth_busy: false,
             refresh_pending: 0,
             last_interaction: Instant::now(),
+            node_supervisor,
+            node_proc: ProcStatus::stopped(),
+            last_node_proc_poll: None,
             tx: gui_tx,
             rx: gui_rx,
         };
@@ -735,6 +762,77 @@ impl AliceWalletApp {
         self.settings.save()
     }
 
+    // ── Embedded node management ────────────────────────────────────────────
+
+    /// Per-OS node data directory under the wallet data root.
+    pub fn node_base_path(&self) -> std::path::PathBuf {
+        crate::config::wallet_data_root().join("node")
+    }
+
+    /// PID file for the embedded node.
+    pub fn node_pid_path(&self) -> std::path::PathBuf {
+        crate::config::wallet_data_root()
+            .join("run")
+            .join("node.pid")
+    }
+
+    /// Build a fully-validated launch plan for the embedded node, resolving the
+    /// bundled binary + chain spec (and verifying the spec SHA if pinned).
+    /// Returns a user-facing error when the binary/spec aren't bundled.
+    pub fn build_node_launch(&self) -> Result<node::NodeLaunchPlan, String> {
+        let program = node::resolve_node_binary()?;
+        let spec = node::resolve_chain_spec()?;
+        // SHA pin is None until baked into the release build (Phase 5); this is
+        // the fail-closed seam, not a no-op in production.
+        node::verify_chain_spec_sha256(&spec, node::pinned_chain_spec_sha256())?;
+        node::build_node_launch_plan(
+            program,
+            &spec,
+            self.node_base_path(),
+            &self.settings.node,
+            &node::bundled_bootnodes(),
+        )
+    }
+
+    /// Non-secret environment for the node child (kept under the wallet root).
+    pub fn node_child_env(&self) -> Vec<(String, String)> {
+        // No secrets ever cross this boundary (plan invariant). We only scope
+        // the node's data location; everything else it derives itself.
+        Vec::new()
+    }
+
+    /// Kick off the embedded node (if not already active).
+    pub fn start_embedded_node(&mut self) {
+        if self.qa_mock_mode || self.network_disabled {
+            self.toast = Some(Toast::err(
+                self.t("node.start_failed_title"),
+                self.t("node.unavailable_isolated"),
+            ));
+            return;
+        }
+        match self.build_node_launch() {
+            Ok(plan) => {
+                let envs = self.node_child_env();
+                let pid = self.node_pid_path();
+                let _ = self.tx.send(AsyncAction::StartNode(plan, envs, pid));
+                self.node_proc.state = crate::supervise::ProcState::Starting;
+            }
+            Err(e) => {
+                self.toast = Some(Toast::err(self.t("node.start_failed_title"), e));
+            }
+        }
+    }
+
+    pub fn stop_embedded_node(&mut self) {
+        let _ = self.tx.send(AsyncAction::StopNode);
+        self.node_proc.state = crate::supervise::ProcState::Stopping;
+    }
+
+    /// The RPC URL to use for chain queries, honoring node mode.
+    pub fn effective_rpc_url(&self) -> String {
+        self.settings.effective_rpc_url()
+    }
+
     pub fn start_refresh(&mut self, address: &str) {
         if self.qa_mock_mode {
             let _ = address;
@@ -755,10 +853,18 @@ impl AliceWalletApp {
             self.refresh_pending = 0;
             return;
         }
+        if self.settings.node.mode == NodeMode::Offline {
+            self.balance = None;
+            self.node_sync = NodeSyncSnapshot::unavailable("node_mode_offline");
+            self.connection_status = ConnectionState::Error;
+            self.sync_error = Some("node_mode_offline".to_string());
+            self.refresh_pending = 0;
+            return;
+        }
         self.refresh_pending += 1;
         self.sync_error = None;
         let _ = self.tx.send(AsyncAction::RefreshAll(
-            self.settings.rpc_url.clone(),
+            self.effective_rpc_url(),
             address.to_owned(),
         ));
     }
@@ -1267,10 +1373,38 @@ mod tests {
     }
 }
 
-fn spawn_worker(rt: Arc<Runtime>, rx: Receiver<AsyncAction>, tx: Sender<AsyncResult>) {
+fn spawn_worker(
+    rt: Arc<Runtime>,
+    rx: Receiver<AsyncAction>,
+    tx: Sender<AsyncResult>,
+    node_supervisor: NodeSupervisor,
+) {
     std::thread::spawn(move || {
         while let Ok(action) = rx.recv() {
             match action {
+                AsyncAction::StartNode(plan, envs, pid_file) => {
+                    // Spawn must run on the tokio runtime (it spawns child I/O
+                    // tasks). Enter the runtime context, then report status.
+                    let sup = node_supervisor.clone();
+                    let tx = tx.clone();
+                    let _guard = rt.enter();
+                    match sup.start(plan, envs, Some(pid_file), true) {
+                        Ok(()) => {
+                            let _ = tx.send(AsyncResult::NodeProc(sup.status()));
+                        }
+                        Err(e) => {
+                            let _ = tx.send(AsyncResult::NodeProcErr(e));
+                            let _ = tx.send(AsyncResult::NodeProc(sup.status()));
+                        }
+                    }
+                }
+                AsyncAction::StopNode => {
+                    node_supervisor.request_stop();
+                    let _ = tx.send(AsyncResult::NodeProc(node_supervisor.status()));
+                }
+                AsyncAction::PollNodeProc => {
+                    let _ = tx.send(AsyncResult::NodeProc(node_supervisor.status()));
+                }
                 AsyncAction::Unlock(payload, mut password) => {
                     let tx = tx.clone();
                     std::thread::spawn(move || {
@@ -1526,7 +1660,11 @@ impl eframe::App for AliceWalletApp {
         }
 
         // Background block poll when on main phase
-        if self.phase == Phase::Main && !self.qa_mock_mode && !self.network_disabled {
+        if self.phase == Phase::Main
+            && !self.qa_mock_mode
+            && !self.network_disabled
+            && self.settings.node.mode != NodeMode::Offline
+        {
             let needs_poll = self
                 .last_block_poll
                 .map(|t| t.elapsed() > Duration::from_secs(8))
@@ -1535,7 +1673,22 @@ impl eframe::App for AliceWalletApp {
                 self.last_block_poll = Some(Instant::now());
                 let _ = self
                     .tx
-                    .send(AsyncAction::RefreshNodeSync(self.settings.rpc_url.clone()));
+                    .send(AsyncAction::RefreshNodeSync(self.effective_rpc_url()));
+            }
+        }
+
+        // Poll embedded-node process status when managing a local node.
+        if self.phase == Phase::Main
+            && !self.qa_mock_mode
+            && self.settings.node.mode == NodeMode::LocalEmbedded
+        {
+            let needs = self
+                .last_node_proc_poll
+                .map(|t| t.elapsed() > Duration::from_secs(2))
+                .unwrap_or(true);
+            if needs {
+                self.last_node_proc_poll = Some(Instant::now());
+                let _ = self.tx.send(AsyncAction::PollNodeProc);
             }
         }
 
@@ -1558,6 +1711,22 @@ impl eframe::App for AliceWalletApp {
             ctx.request_repaint();
         } else {
             ctx.request_repaint_after(Duration::from_millis(500));
+        }
+    }
+
+    /// On app shutdown, tear down the embedded node child so it never outlives
+    /// the wallet (plan §1.2 "App shutdown"). Best-effort + bounded: we request
+    /// a graceful stop and give the supervision loop a brief window to act;
+    /// `kill_on_drop` on the child is the backstop. A node crash/teardown never
+    /// touches wallet custody state.
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if self.node_supervisor.is_active() {
+            self.node_supervisor.request_stop();
+            // Brief, bounded wait for graceful SIGTERM teardown.
+            let deadline = Instant::now() + Duration::from_secs(6);
+            while Instant::now() < deadline && self.node_supervisor.is_active() {
+                std::thread::sleep(Duration::from_millis(100));
+            }
         }
     }
 }
@@ -1721,6 +1890,12 @@ impl AliceWalletApp {
             AsyncResult::SyncErr(err) => {
                 self.finish_refresh();
                 self.sync_error = Some(err);
+            }
+            AsyncResult::NodeProc(status) => {
+                self.node_proc = status;
+            }
+            AsyncResult::NodeProcErr(err) => {
+                self.toast = Some(Toast::err(self.t("node.start_failed_title"), err));
             }
         }
     }

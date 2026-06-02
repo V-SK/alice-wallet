@@ -27,6 +27,10 @@ pub struct Settings {
     pub auto_lock_minutes: u32,
     #[serde(default)]
     pub lang: Lang,
+    /// Embedded / managed Alice node configuration. Defaulted so older config
+    /// files (written before the all-in-one node feature) load unchanged.
+    #[serde(default)]
+    pub node: crate::node::NodeSettings,
 }
 
 fn default_rpc() -> String {
@@ -42,6 +46,21 @@ impl Default for Settings {
             rpc_url: default_rpc(),
             auto_lock_minutes: default_lock(),
             lang: Lang::default(),
+            node: crate::node::NodeSettings::default(),
+        }
+    }
+}
+
+impl Settings {
+    /// The RPC URL the wallet should actually connect to, honoring node mode:
+    /// in `LocalEmbedded` mode this is the loopback URL of the managed node;
+    /// otherwise the configured remote `rpc_url`.
+    pub fn effective_rpc_url(&self) -> String {
+        match self.node.mode {
+            crate::node::NodeMode::LocalEmbedded => self.node.local_rpc_url(),
+            crate::node::NodeMode::Remote => self.rpc_url.clone(),
+            // Offline: still hand back the remote URL; callers gate on mode.
+            crate::node::NodeMode::Offline => self.rpc_url.clone(),
         }
     }
 }

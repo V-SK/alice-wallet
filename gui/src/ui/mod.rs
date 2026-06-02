@@ -6,6 +6,7 @@ pub mod dashboard;
 pub mod history_view;
 pub mod import;
 pub mod mining;
+pub mod node_view;
 pub mod receive;
 pub mod send;
 pub mod settings;

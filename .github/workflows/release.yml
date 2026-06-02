@@ -47,9 +47,56 @@ jobs:
           sudo apt-get install -y libgtk-3-dev libxcb-render0-dev libxcb-shape0-dev \
             libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libwayland-dev
 
+      - name: Test (gui crate)
+        working-directory: gui
+        run: cargo test --target ${{ matrix.target }}
+
       - name: Build
         working-directory: gui
         run: cargo build --release --target ${{ matrix.target }}
+
+      # ----------------------------------------------------------------------
+      # Optional embedded-node bundling (the "bundle monerod" half).
+      #
+      # The all-in-one wallet manages a child `solochain-template-node`. When a
+      # prebuilt node binary + raw chain spec are provided for this target, they
+      # are copied alongside the wallet so it can launch a local node. The
+      # wallet resolves these as siblings of its own executable (see
+      # gui/src/node.rs::resolve_node_binary / resolve_chain_spec).
+      #
+      # Provide them via repo secrets/vars (per-OS download URLs) OR commit them
+      # under gui/release-assets/<target>/. If absent, the wallet still ships and
+      # works in Remote-node mode (headline local-node feature shows a clear
+      # "node binary not bundled" notice). This keeps CI green before V supplies
+      # the per-OS node binaries (flagged as a release step).
+      # ----------------------------------------------------------------------
+      - name: Stage node binary + chain spec (if available)
+        id: node_assets
+        shell: bash
+        env:
+          NODE_BIN_URL: ${{ secrets.ALICE_NODE_BIN_URL }}
+          CHAIN_SPEC_URL: ${{ secrets.ALICE_CHAIN_SPEC_URL }}
+        run: |
+          set -euo pipefail
+          mkdir -p node-stage
+          have_node=0
+          have_spec=0
+          # 1) committed assets take precedence.
+          if [ -d "gui/release-assets/${{ matrix.target }}" ]; then
+            cp -v gui/release-assets/${{ matrix.target }}/* node-stage/ 2>/dev/null || true
+          fi
+          # 2) download URLs (per-OS) if provided.
+          if [ -n "${NODE_BIN_URL:-}" ]; then
+            curl -fsSL "$NODE_BIN_URL" -o node-stage/solochain-template-node || true
+          fi
+          if [ -n "${CHAIN_SPEC_URL:-}" ]; then
+            curl -fsSL "$CHAIN_SPEC_URL" -o node-stage/alice-mainnet-raw.json || true
+          fi
+          [ -f node-stage/solochain-template-node ] || [ -f node-stage/solochain-template-node.exe ] && have_node=1 || true
+          [ -f node-stage/alice-mainnet-raw.json ] && have_spec=1 || true
+          echo "have_node=$have_node" >> "$GITHUB_OUTPUT"
+          echo "have_spec=$have_spec" >> "$GITHUB_OUTPUT"
+          echo "Node bundling: have_node=$have_node have_spec=$have_spec"
 
       # ---------- Linux package ----------
       - name: Package Linux
@@ -59,6 +106,14 @@ jobs:
           cp gui/target/${{ matrix.target }}/release/gui dist/AliceWallet/AliceWallet
           chmod +x dist/AliceWallet/AliceWallet
           cp gui/alice-logo-traced.svg dist/AliceWallet/
+          # Embedded node (optional) — sibling layout per gui/src/node.rs.
+          if [ -f node-stage/solochain-template-node ]; then
+            cp node-stage/solochain-template-node dist/AliceWallet/
+            chmod +x dist/AliceWallet/solochain-template-node
+          fi
+          if [ -f node-stage/alice-mainnet-raw.json ]; then
+            cp node-stage/alice-mainnet-raw.json dist/AliceWallet/
+          fi
           cat > dist/AliceWallet/AliceWallet.desktop <<EOF
           [Desktop Entry]
           Name=Alice Wallet
@@ -82,6 +137,13 @@ jobs:
           New-Item -ItemType Directory -Force dist/AliceWallet | Out-Null
           Copy-Item gui/target/${{ matrix.target }}/release/gui.exe dist/AliceWallet/AliceWallet.exe
           Copy-Item gui/alice-logo-traced.svg dist/AliceWallet/
+          # Embedded node (optional) — sibling layout per gui/src/node.rs.
+          if (Test-Path node-stage/solochain-template-node.exe) {
+            Copy-Item node-stage/solochain-template-node.exe dist/AliceWallet/
+          }
+          if (Test-Path node-stage/alice-mainnet-raw.json) {
+            Copy-Item node-stage/alice-mainnet-raw.json dist/AliceWallet/
+          }
           Compress-Archive -Path dist/AliceWallet -DestinationPath ${{ matrix.artifact }}
 
       # ---------- macOS .app ----------
@@ -93,7 +155,18 @@ jobs:
           cp gui/target/${{ matrix.target }}/release/gui "$APP/Contents/MacOS/AliceWallet"
           chmod +x "$APP/Contents/MacOS/AliceWallet"
           cp gui/alice-logo-traced.svg "$APP/Contents/Resources/"
-          cat > "$APP/Contents/Info.plist" <<'EOF'
+          # Embedded node (optional): binary beside the wallet in MacOS/, spec
+          # in Resources/ — matches gui/src/node.rs resolution candidates.
+          if [ -f node-stage/solochain-template-node ]; then
+            cp node-stage/solochain-template-node "$APP/Contents/MacOS/"
+            chmod +x "$APP/Contents/MacOS/solochain-template-node"
+          fi
+          if [ -f node-stage/alice-mainnet-raw.json ]; then
+            cp node-stage/alice-mainnet-raw.json "$APP/Contents/Resources/"
+          fi
+          # Read version from Cargo.toml so the bundle never drifts from the crate.
+          VER=$(grep -m1 '^version' gui/Cargo.toml | sed -E 's/version *= *"([^"]+)".*/\1/')
+          cat > "$APP/Contents/Info.plist" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
@@ -101,8 +174,8 @@ jobs:
             <key>CFBundleName</key><string>Alice Wallet</string>
             <key>CFBundleDisplayName</key><string>Alice Wallet</string>
             <key>CFBundleIdentifier</key><string>org.aliceprotocol.wallet</string>
-            <key>CFBundleVersion</key><string>0.1.0</string>
-            <key>CFBundleShortVersionString</key><string>0.1.0</string>
+            <key>CFBundleVersion</key><string>${VER}</string>
+            <key>CFBundleShortVersionString</key><string>${VER}</string>
             <key>CFBundleExecutable</key><string>AliceWallet</string>
             <key>CFBundlePackageType</key><string>APPL</string>
             <key>LSMinimumSystemVersion</key><string>11.0</string>
@@ -110,6 +183,10 @@ jobs:
           </dict>
           </plist>
           EOF
+          # Sign nested node binary first (if present), then the bundle.
+          if [ -f "$APP/Contents/MacOS/solochain-template-node" ]; then
+            codesign --force -s - "$APP/Contents/MacOS/solochain-template-node" || true
+          fi
           codesign --force --deep -s - "$APP" || true
           ditto -c -k --keepParent "$APP" ${{ matrix.artifact }}
 

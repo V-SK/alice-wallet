@@ -399,7 +399,13 @@ fn encrypt_blob(plaintext: &[u8], key: &[u8; 32], aad: &[u8]) -> Result<(String,
 
     let cipher = Aes256Gcm::new(key.into());
     let ciphertext = cipher
-        .encrypt(&nonce_bytes.into(), Payload { msg: plaintext, aad })
+        .encrypt(
+            &nonce_bytes.into(),
+            Payload {
+                msg: plaintext,
+                aad,
+            },
+        )
         .map_err(|e| format!("encryption failure: {}", e))?;
 
     Ok((b64.encode(&ciphertext), b64.encode(&nonce_bytes)))

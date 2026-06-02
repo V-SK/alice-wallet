@@ -5,6 +5,8 @@ mod crypto;
 mod history;
 mod i18n;
 mod miner;
+mod node;
+mod supervise;
 mod ui;
 mod wallet_profiles;
 

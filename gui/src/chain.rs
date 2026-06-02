@@ -18,24 +18,97 @@ pub const ALICE_APPROVED_RUNTIME_SPEC_VERSIONS: [u32; 1] = [108];
 
 pub type Client = OnlineClient<PolkadotConfig>;
 
-/// Enforce that a node URL uses TLS-protected WebSockets (`wss://`) only.
+/// Return `true` when `host` is a loopback host (`127.0.0.1`, `::1`,
+/// `localhost`) — i.e. traffic that never leaves the local machine.
 ///
-/// subxt's own `from_url` helpers treat plain `ws://` to a loopback host as
-/// "secure" (the localhost exception). For a wallet that signs transactions we
-/// require transport encryption on every connection regardless of host, so we
-/// reject anything that is not `wss://` (notably plain `ws://`, `http://` and
-/// `https://`) before we ever attempt to connect.
+/// `host` is the authority portion of a URL (`host[:port]`); the optional port
+/// and any IPv6 brackets are stripped before comparison.
+fn host_is_loopback(host: &str) -> bool {
+    // Strip credentials if somehow present ("user:pass@host" is not expected
+    // for node URLs, but be defensive).
+    let host = host.rsplit('@').next().unwrap_or(host);
+
+    // IPv6 literal: "[::1]:9944" / "[::1]".
+    if let Some(rest) = host.strip_prefix('[') {
+        let inner = rest.split(']').next().unwrap_or("");
+        return matches!(inner, "::1" | "0:0:0:0:0:0:0:1");
+    }
+
+    // IPv4 / hostname: split off ":port".
+    let hostname = host.split(':').next().unwrap_or(host);
+    if hostname == "localhost" {
+        return true;
+    }
+    // The entire 127.0.0.0/8 block is loopback, but ONLY when `hostname` is a
+    // real dotted-quad IPv4 literal — a hostname like "127.0.0.1.evil.example"
+    // must NOT be treated as loopback.
+    let octets: Vec<&str> = hostname.split('.').collect();
+    if octets.len() == 4
+        && octets
+            .iter()
+            .all(|o| !o.is_empty() && o.len() <= 3 && o.chars().all(|c| c.is_ascii_digit()))
+    {
+        if let Ok(first) = octets[0].parse::<u8>() {
+            // Confirm the remaining octets are valid u8 too (well-formed IPv4).
+            let well_formed = octets[1..].iter().all(|o| o.parse::<u8>().is_ok());
+            return well_formed && first == 127;
+        }
+    }
+    false
+}
+
+/// Enforce the wallet's transport-security policy on a node URL.
+///
+/// A wallet that signs transactions requires transport encryption on every
+/// connection that leaves the machine, so **remote** endpoints must use
+/// `wss://`. We reject plain `ws://`, `http://` and `https://` to a remote
+/// host before we ever attempt to connect.
+///
+/// The one carefully-scoped exception is the wallet's **own embedded local
+/// node**: a bundled `solochain-template-node` serves plaintext
+/// `ws://127.0.0.1:<rpc>` on loopback only (its RPC is never bound to an
+/// external interface — `--rpc-methods safe`, no `--rpc-external`). Traffic to
+/// `127.0.0.1` / `::1` / `localhost` never crosses the network, so a TLS
+/// requirement there would add no security while making the embedded-node
+/// feature impossible. We therefore allow plaintext `ws://` for loopback hosts
+/// ONLY, and continue to require `wss://` for everything else.
+///
+/// Note: subxt's own `from_url` helper applies a similar localhost exception,
+/// but only for `ws://`; we keep our own guard so the policy is explicit and
+/// independently tested (remote `ws://` is rejected; loopback `ws://` allowed;
+/// `http(s)://` always rejected).
 fn require_wss_url(url: &str) -> Result<(), String> {
     let trimmed = url.trim();
-    let scheme_is_wss = trimmed
-        .split_once("://")
-        .map(|(scheme, _)| scheme.eq_ignore_ascii_case("wss"))
-        .unwrap_or(false);
-    if scheme_is_wss {
-        Ok(())
-    } else {
-        Err("Node URL must use wss:// (encrypted WebSocket); insecure schemes are rejected".into())
+    let Some((scheme, rest)) = trimmed.split_once("://") else {
+        return Err(
+            "Node URL must use wss:// (encrypted WebSocket); insecure schemes are rejected".into(),
+        );
+    };
+
+    if scheme.eq_ignore_ascii_case("wss") {
+        return Ok(());
     }
+
+    // Loopback-only exception for the wallet's own embedded node over plain ws.
+    if scheme.eq_ignore_ascii_case("ws") {
+        // Authority is everything up to the first '/', '?' or '#'.
+        let authority = rest
+            .split(|c| c == '/' || c == '?' || c == '#')
+            .next()
+            .unwrap_or(rest);
+        if host_is_loopback(authority) {
+            return Ok(());
+        }
+    }
+
+    Err("Node URL must use wss:// (encrypted WebSocket); plaintext ws:// is allowed only for a local loopback node".into())
+}
+
+/// Public predicate form of [`require_wss_url`] for callers that need to gate
+/// UI/availability on transport policy without attempting a connection
+/// (e.g. the embedded-node module validating its own loopback URL).
+pub fn wss_url_is_allowed(url: &str) -> bool {
+    require_wss_url(url).is_ok()
 }
 
 pub async fn get_client(url: &str) -> Result<Client, String> {
@@ -239,13 +312,21 @@ struct RuntimeVersion {
 }
 
 pub fn sync_mode_from_url(url: &str) -> NodeSyncMode {
-    let lower = url.to_ascii_lowercase();
-    if lower.contains("127.0.0.1") || lower.contains("localhost") || lower.contains("[::1]") {
+    let trimmed = url.trim();
+    let Some((scheme, rest)) = trimmed.split_once("://") else {
+        return NodeSyncMode::Unavailable;
+    };
+    if !(scheme.eq_ignore_ascii_case("ws") || scheme.eq_ignore_ascii_case("wss")) {
+        return NodeSyncMode::Unavailable;
+    }
+    let authority = rest
+        .split(|c| c == '/' || c == '?' || c == '#')
+        .next()
+        .unwrap_or(rest);
+    if host_is_loopback(authority) {
         NodeSyncMode::LocalNode
-    } else if lower.starts_with("ws://") || lower.starts_with("wss://") {
-        NodeSyncMode::RemoteNode
     } else {
-        NodeSyncMode::Unavailable
+        NodeSyncMode::RemoteNode
     }
 }
 
@@ -571,20 +652,82 @@ mod tests {
     }
 
     #[test]
-    fn require_wss_url_accepts_only_wss() {
+    fn require_wss_url_accepts_wss_anywhere() {
         assert!(require_wss_url("wss://rpc.aliceprotocol.org").is_ok());
         assert!(require_wss_url("WSS://rpc.aliceprotocol.org").is_ok());
         assert!(require_wss_url("  wss://rpc.aliceprotocol.org  ").is_ok());
+        assert!(require_wss_url("wss://127.0.0.1:9944").is_ok());
+    }
 
-        // Insecure / non-wss schemes must be rejected, including loopback ws://
-        // which subxt would otherwise accept under its localhost exception.
+    #[test]
+    fn require_wss_url_allows_plaintext_ws_only_on_loopback() {
+        // R1 fix: the wallet's own embedded local node serves ws:// on loopback.
+        assert!(require_wss_url("ws://127.0.0.1:9944").is_ok());
+        assert!(require_wss_url("ws://127.0.0.1").is_ok());
+        assert!(require_wss_url("ws://localhost:9944").is_ok());
+        assert!(require_wss_url("WS://localhost:9944").is_ok());
+        assert!(require_wss_url("ws://[::1]:9944").is_ok());
+        assert!(require_wss_url("ws://127.0.0.1:9944/").is_ok());
+        // Whole 127.0.0.0/8 loopback block.
+        assert!(require_wss_url("ws://127.1.2.3:9944").is_ok());
+    }
+
+    #[test]
+    fn require_wss_url_rejects_plaintext_ws_to_remote_hosts() {
+        // Remote endpoints MUST still be TLS-protected — the audit invariant.
         assert!(require_wss_url("ws://rpc.aliceprotocol.org").is_err());
-        assert!(require_wss_url("ws://127.0.0.1:9944").is_err());
-        assert!(require_wss_url("ws://localhost:9944").is_err());
+        assert!(require_wss_url("ws://rpc.aliceprotocol.org:9944").is_err());
+        // A remote host that merely embeds "localhost"/"127.0.0.1" as a
+        // substring must NOT slip through (defeats naive contains-checks).
+        assert!(require_wss_url("ws://localhost.evil.example").is_err());
+        assert!(require_wss_url("ws://127.0.0.1.evil.example:9944").is_err());
+        assert!(require_wss_url("ws://10.0.0.5:9944").is_err());
+        assert!(require_wss_url("ws://[2001:db8::1]:9944").is_err());
+    }
+
+    #[test]
+    fn require_wss_url_rejects_non_ws_schemes_everywhere() {
         assert!(require_wss_url("http://rpc.aliceprotocol.org").is_err());
         assert!(require_wss_url("https://rpc.aliceprotocol.org").is_err());
+        // Even on loopback, http(s) is rejected — only ws/wss are node transports.
+        assert!(require_wss_url("http://127.0.0.1:9944").is_err());
+        assert!(require_wss_url("https://localhost:9944").is_err());
         assert!(require_wss_url("rpc.aliceprotocol.org").is_err());
         assert!(require_wss_url("").is_err());
+    }
+
+    #[test]
+    fn sync_mode_classifies_loopback_vs_remote_by_host_not_substring() {
+        assert_eq!(
+            sync_mode_from_url("ws://127.0.0.1:9944"),
+            NodeSyncMode::LocalNode
+        );
+        assert_eq!(
+            sync_mode_from_url("ws://localhost:9944"),
+            NodeSyncMode::LocalNode
+        );
+        assert_eq!(
+            sync_mode_from_url("ws://[::1]:9944"),
+            NodeSyncMode::LocalNode
+        );
+        assert_eq!(
+            sync_mode_from_url("wss://rpc.aliceprotocol.org"),
+            NodeSyncMode::RemoteNode
+        );
+        // Substring spoofing must classify as Remote, not Local.
+        assert_eq!(
+            sync_mode_from_url("ws://127.0.0.1.evil.example:9944"),
+            NodeSyncMode::RemoteNode
+        );
+        assert_eq!(
+            sync_mode_from_url("wss://localhost.evil.example"),
+            NodeSyncMode::RemoteNode
+        );
+        assert_eq!(
+            sync_mode_from_url("http://127.0.0.1"),
+            NodeSyncMode::Unavailable
+        );
+        assert_eq!(sync_mode_from_url("garbage"), NodeSyncMode::Unavailable);
     }
 
     #[test]

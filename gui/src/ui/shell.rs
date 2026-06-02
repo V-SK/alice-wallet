@@ -24,15 +24,18 @@ pub fn render(ui_root: &mut egui::Ui, app: &mut AliceWalletApp) {
                 app.set_page(Page::Mining);
             }
             if i.key_pressed(egui::Key::Num5) {
-                app.set_page(Page::History);
+                app.set_page(Page::Node);
             }
             if i.key_pressed(egui::Key::Num6) {
-                app.set_page(Page::Accounts);
+                app.set_page(Page::History);
             }
             if i.key_pressed(egui::Key::Num7) {
-                app.set_page(Page::AddressBook);
+                app.set_page(Page::Accounts);
             }
             if i.key_pressed(egui::Key::Num8) {
+                app.set_page(Page::AddressBook);
+            }
+            if i.key_pressed(egui::Key::Num9) {
                 app.set_page(Page::Settings);
             }
         }
@@ -186,6 +189,7 @@ pub fn render(ui_root: &mut egui::Ui, app: &mut AliceWalletApp) {
             let l_receive = app.t("nav.receive");
             let l_send = app.t("nav.send");
             let l_mining = app.t("nav.mining");
+            let l_node = app.t("nav.node");
             let l_hist = app.t("nav.history");
             let l_accounts = app.t("nav.accounts");
             let l_book = app.t("nav.address_book");
@@ -194,6 +198,7 @@ pub fn render(ui_root: &mut egui::Ui, app: &mut AliceWalletApp) {
             nav_item(ui, app, Page::Receive, "↓", l_receive);
             nav_item(ui, app, Page::Send, "↑", l_send);
             nav_item(ui, app, Page::Mining, "▣", l_mining);
+            nav_item(ui, app, Page::Node, "◆", l_node);
             nav_item(ui, app, Page::History, "≡", l_hist);
             nav_item(ui, app, Page::Accounts, "●", l_accounts);
             nav_item(ui, app, Page::AddressBook, "◇", l_book);
@@ -236,6 +241,7 @@ pub fn render(ui_root: &mut egui::Ui, app: &mut AliceWalletApp) {
                                 Page::Receive => super::receive::render(ui, app),
                                 Page::Send => super::send::render(ui, app),
                                 Page::Mining => super::mining::render(ui, app),
+                                Page::Node => super::node_view::render(ui, app),
                                 Page::History => super::history_view::render(ui, app),
                                 Page::Accounts => super::accounts::render(ui, app),
                                 Page::AddressBook => super::address_book::render(ui, app),
