@@ -148,6 +148,77 @@ pub fn ghost_button(ui: &mut Ui, label: &str) -> Response {
     ui.add(btn)
 }
 
+/// Semantic tone for a status pill.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Tone {
+    /// Healthy / online / synced.
+    Live,
+    /// In-progress / pending / syncing.
+    Warn,
+    /// Error / failed.
+    Danger,
+    /// Inactive / stopped / offline.
+    Off,
+}
+
+impl Tone {
+    fn fg(self) -> Color32 {
+        match self {
+            Tone::Live => THEME.live,
+            Tone::Warn => THEME.warn,
+            Tone::Danger => THEME.danger,
+            Tone::Off => THEME.off,
+        }
+    }
+}
+
+/// A rounded status pill: a coloured dot + label on a tinted, bordered chip.
+/// Used for at-a-glance state (node sync, mining on/off) — matches the brand's
+/// `.a-badge` / `.a-dot` components in alice-theme.html.
+pub fn status_pill(ui: &mut Ui, tone: Tone, label: &str) -> Response {
+    let fg = tone.fg();
+    let tint = Color32::from_rgba_unmultiplied(fg.r(), fg.g(), fg.b(), 26);
+    let border = Color32::from_rgba_unmultiplied(fg.r(), fg.g(), fg.b(), 96);
+    egui::Frame::NONE
+        .fill(tint)
+        // u8 max — a fully-rounded ("pill") radius for a short chip.
+        .corner_radius(CornerRadius::same(255))
+        .inner_margin(egui::Margin::symmetric(10, 5))
+        .stroke(Stroke::new(1.0, border))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+                ui.painter().circle_filled(rect.center(), 4.0, fg);
+                ui.add_space(6.0);
+                ui.label(RichText::new(label).size(11.5).strong().color(fg));
+            });
+        })
+        .response
+}
+
+/// Map a node sync state to a status tone (green=synced, amber=syncing, …).
+pub fn sync_tone(state: crate::chain::NodeSyncState) -> Tone {
+    use crate::chain::NodeSyncState as S;
+    match state {
+        S::Synced => Tone::Live,
+        S::Syncing => Tone::Warn,
+        S::Stale => Tone::Warn,
+        S::Offline => Tone::Off,
+        S::Unavailable | S::Error => Tone::Danger,
+    }
+}
+
+/// Map a supervised-process state to a status tone (green=running, …).
+pub fn proc_tone(state: crate::supervise::ProcState) -> Tone {
+    use crate::supervise::ProcState as P;
+    match state {
+        P::Running => Tone::Live,
+        P::Starting | P::Stopping => Tone::Warn,
+        P::Error => Tone::Danger,
+        P::Stopped => Tone::Off,
+    }
+}
+
 pub fn error_banner(ui: &mut Ui, msg: &str) {
     egui::Frame::NONE
         .fill(THEME.danger_bg)
@@ -245,7 +316,7 @@ pub fn password_strength(pwd: &str) -> (u8, &'static str, Color32) {
     match score {
         0 => (0, "Too weak", THEME.danger),
         1 => (1, "Weak", THEME.danger),
-        2 => (2, "Fair", Color32::from_rgb(255, 179, 64)),
+        2 => (2, "Fair", THEME.warn),
         3 => (3, "Strong", THEME.primary_hi),
         _ => (4, "Excellent", THEME.primary),
     }
@@ -273,7 +344,7 @@ pub fn format_token(amount: u128) -> String {
     let whole = amount / 1_000_000_000_000;
     let frac = amount % 1_000_000_000_000;
     if frac == 0 {
-        format!("{}", with_commas(whole))
+        with_commas(whole)
     } else {
         let frac_str = format!("{:012}", frac);
         let frac_trimmed = frac_str.trim_end_matches('0');

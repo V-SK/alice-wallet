@@ -14,6 +14,9 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
     subtle(ui, t_subtitle);
     ui.add_space(18.0);
 
+    about_card(ui, app);
+    ui.add_space(14.0);
+
     // Language card
     card(ui, |ui| {
         let l_title = app.t("set.language");
@@ -156,6 +159,97 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
         if danger_button(ui, app.t("set.lock_now"), true).clicked() {
             app.lock_now();
         }
+    });
+}
+
+/// About / brand card: the Alice logo, app identity, version, security posture.
+fn about_card(ui: &mut egui::Ui, app: &AliceWalletApp) {
+    card_accent(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::Image::new(egui::include_image!("../../assets/brand/alice-logo.svg"))
+                    .fit_to_exact_size(egui::vec2(44.0, 44.0)),
+            );
+            ui.add_space(14.0);
+            ui.vertical(|ui| {
+                ui.label(
+                    RichText::new("Alice Wallet")
+                        .size(20.0)
+                        .strong()
+                        .color(THEME.text_hi),
+                );
+                ui.add_space(2.0);
+                ui.label(
+                    RichText::new(app.t("about.tagline"))
+                        .size(12.0)
+                        .italics()
+                        .color(THEME.primary_hi),
+                );
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                egui::Frame::NONE
+                    .fill(THEME.bg_panel_hi)
+                    .corner_radius(255)
+                    .inner_margin(egui::Margin::symmetric(12, 6))
+                    .stroke(Stroke::new(1.0, THEME.border_accent))
+                    .show(ui, |ui| {
+                        ui.label(
+                            RichText::new(format!("v{}", env!("CARGO_PKG_VERSION")))
+                                .size(12.0)
+                                .strong()
+                                .family(egui::FontFamily::Monospace)
+                                .color(THEME.primary),
+                        );
+                    });
+            });
+        });
+
+        ui.add_space(14.0);
+        ui.label(
+            RichText::new(app.t("about.blurb"))
+                .size(12.5)
+                .color(THEME.text_mid),
+        );
+
+        ui.add_space(14.0);
+        egui::Frame::NONE
+            .fill(THEME.bg_panel_hi)
+            .corner_radius(10)
+            .inner_margin(egui::Margin::same(14))
+            .stroke(Stroke::new(1.0, THEME.border))
+            .show(ui, |ui| {
+                ui.label(
+                    RichText::new(app.t("about.security_title").to_uppercase())
+                        .size(10.0)
+                        .strong()
+                        .extra_letter_spacing(1.0)
+                        .color(THEME.text_dim),
+                );
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new(app.t("about.security_body"))
+                        .size(12.0)
+                        .color(THEME.text_mid),
+                );
+            });
+
+        ui.add_space(12.0);
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(app.t("about.website").to_uppercase())
+                    .size(10.0)
+                    .strong()
+                    .color(THEME.text_dim),
+            );
+            ui.add_space(8.0);
+            ui.hyperlink_to(
+                RichText::new(app.t("about.website_url"))
+                    .size(12.0)
+                    .family(egui::FontFamily::Monospace)
+                    .color(THEME.primary_hi),
+                "https://aliceprotocol.org",
+            );
+        });
     });
 }
 

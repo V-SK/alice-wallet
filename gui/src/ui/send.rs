@@ -82,7 +82,7 @@ fn prepare_review(app: &mut AliceWalletApp) {
         app.send_review_error = Some(app.t("send.error_recipient_required").to_string());
         return;
     }
-    if let Err(_) = chain::validate_address(&app.send_recipient) {
+    if chain::validate_address(&app.send_recipient).is_err() {
         app.send_review_error = Some(app.t("send.invalid_address").to_string());
         return;
     }

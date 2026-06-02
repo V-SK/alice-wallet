@@ -14,7 +14,7 @@ pub fn render(ui_root: &mut egui::Ui, app: &mut AliceWalletApp) {
                 ui.vertical_centered(|ui| {
                     ui.add_space(28.0);
                     ui.add(
-                        egui::Image::new(egui::include_image!("../../alice-logo-traced.svg"))
+                        egui::Image::new(egui::include_image!("../../assets/brand/alice-logo.svg"))
                             .max_height(32.0),
                     );
                     ui.add_space(4.0);

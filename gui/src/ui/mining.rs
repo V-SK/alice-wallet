@@ -33,11 +33,30 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
         section_title(ui, app.t("mining.route_title"));
         status_row(ui, app.t("mining.route"), app.t("mining.route_xmr"));
         ui.add_space(8.0);
-        status_row(
-            ui,
-            app.t("mining.status"),
-            mining_status_label(packet.mining_status, app),
-        );
+        // Mining status as a coloured pill. Execution is OFF, so the engine never
+        // reports "running"; the pill reflects evidence readiness, not live mining.
+        egui::Frame::NONE
+            .fill(THEME.bg_panel_hi)
+            .corner_radius(10)
+            .inner_margin(egui::Margin::symmetric(12, 9))
+            .stroke(Stroke::new(1.0, THEME.border))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(app.t("mining.status").to_uppercase())
+                            .size(10.0)
+                            .strong()
+                            .color(THEME.text_dim),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        status_pill(
+                            ui,
+                            mining_tone(packet.mining_status),
+                            mining_status_label(packet.mining_status, app),
+                        );
+                    });
+                });
+            });
         ui.add_space(8.0);
         status_row(
             ui,
@@ -198,6 +217,15 @@ fn row(ui: &mut egui::Ui, label: &str, value: &str, mono_value: bool) {
                 });
             });
         });
+}
+
+fn mining_tone(status: WalletMiningStatus) -> Tone {
+    match status {
+        WalletMiningStatus::EvidenceAvailable => Tone::Live,
+        WalletMiningStatus::Preparing => Tone::Warn,
+        WalletMiningStatus::EvidenceStale => Tone::Warn,
+        WalletMiningStatus::Unavailable => Tone::Off,
+    }
 }
 
 fn mining_status_label(status: WalletMiningStatus, app: &AliceWalletApp) -> &'static str {

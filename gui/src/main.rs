@@ -14,7 +14,10 @@ use eframe::egui::IconData;
 
 fn load_icon() -> Option<IconData> {
     use usvg::TreeParsing;
-    let svg_data = include_bytes!("../alice-logo-traced.svg");
+    // Canonical Alice mark, bundled in the wallet's own assets dir (byte-identical
+    // to alice-website/assets/alice-logo.svg). Rasterised here for the OS window
+    // icon; egui needs raster for the title-bar/dock icon.
+    let svg_data = include_bytes!("../assets/brand/alice-logo.svg");
 
     let opt = usvg::Options::default();
     let tree = usvg::Tree::from_data(svg_data, &opt).ok()?;
@@ -26,8 +29,8 @@ fn load_icon() -> Option<IconData> {
     let mut pixmap = tiny_skia::Pixmap::new(width, height)?;
 
     let size = tree.size;
-    let sx = width as f32 / size.width() as f32;
-    let sy = height as f32 / size.height() as f32;
+    let sx = width as f32 / size.width();
+    let sy = height as f32 / size.height();
     let scale = sx.min(sy);
     let transform = tiny_skia::Transform::from_scale(scale, scale);
 

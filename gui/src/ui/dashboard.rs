@@ -283,15 +283,18 @@ fn render_qr(data: &str) -> Option<ColorImage> {
 
 fn node_sync_summary(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
     card(ui, |ui| {
-        section_title(ui, app.t("sync.title"));
-        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            section_title(ui, app.t("sync.title"));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                status_pill(
+                    ui,
+                    sync_tone(app.node_sync.status),
+                    app.t(app.node_sync.status_i18n_key()),
+                );
+            });
+        });
+        ui.add_space(8.0);
 
-        sync_row(
-            ui,
-            app.t("sync.status"),
-            app.t(app.node_sync.status_i18n_key()),
-        );
-        ui.add_space(10.0);
         sync_row(ui, app.t("sync.mode"), app.node_sync.sync_mode.label());
         ui.add_space(10.0);
         let progress = app

@@ -15,8 +15,10 @@ fn auth_shell<F: FnOnce(&mut egui::Ui)>(ui_root: &mut egui::Ui, content: F) {
                     ui.horizontal(|ui| {
                         ui.add_space((ui.available_width() - 36.0).max(0.0) / 2.0);
                         ui.add(
-                            egui::Image::new(egui::include_image!("../../alice-logo-traced.svg"))
-                                .max_height(36.0),
+                            egui::Image::new(egui::include_image!(
+                                "../../assets/brand/alice-logo.svg"
+                            ))
+                            .max_height(36.0),
                         );
                     });
                     ui.add_space(6.0);

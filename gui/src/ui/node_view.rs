@@ -179,12 +179,25 @@ fn local_node_card(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
         let restarts_used = app.node_proc.restarts_used;
         let proc_message = app.node_proc.message.clone();
 
-        kv_row(
-            ui,
-            app.t("node.proc_state"),
-            app.t(proc_state.i18n_key()),
-            state_color(proc_state),
-        );
+        // Process state as a status pill (green running / amber starting / red error).
+        egui::Frame::NONE
+            .fill(THEME.bg_panel_hi)
+            .corner_radius(10)
+            .inner_margin(egui::Margin::symmetric(12, 9))
+            .stroke(Stroke::new(1.0, THEME.border))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(app.t("node.proc_state").to_uppercase())
+                            .size(10.0)
+                            .strong()
+                            .color(THEME.text_dim),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        status_pill(ui, proc_tone(proc_state), app.t(proc_state.i18n_key()));
+                    });
+                });
+            });
         ui.add_space(8.0);
         let pid = proc_pid
             .map(|p| p.to_string())
@@ -271,12 +284,25 @@ fn sync_card(ui: &mut egui::Ui, app: &AliceWalletApp) {
     card(ui, |ui| {
         section_title(ui, app.t("node.sync_title"));
         ui.add_space(8.0);
-        kv_row(
-            ui,
-            app.t("sync.status"),
-            app.t(snap.status_i18n_key()),
-            THEME.text_hi,
-        );
+        // Sync status as a coloured pill (green synced / amber syncing / red error).
+        egui::Frame::NONE
+            .fill(THEME.bg_panel_hi)
+            .corner_radius(10)
+            .inner_margin(egui::Margin::symmetric(12, 9))
+            .stroke(Stroke::new(1.0, THEME.border))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(app.t("sync.status").to_uppercase())
+                            .size(10.0)
+                            .strong()
+                            .color(THEME.text_dim),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        status_pill(ui, sync_tone(snap.status), app.t(snap.status_i18n_key()));
+                    });
+                });
+            });
         ui.add_space(8.0);
         kv_row(
             ui,
@@ -404,13 +430,4 @@ fn warn_banner(ui: &mut egui::Ui, title: &str, body: &str) {
                 }
             });
         });
-}
-
-fn state_color(state: ProcState) -> egui::Color32 {
-    match state {
-        ProcState::Running => THEME.primary,
-        ProcState::Starting | ProcState::Stopping => egui::Color32::from_rgb(255, 179, 64),
-        ProcState::Error => THEME.danger,
-        ProcState::Stopped => THEME.text_mid,
-    }
 }

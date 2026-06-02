@@ -52,23 +52,20 @@ pub fn render(ui_root: &mut egui::Ui, app: &mut AliceWalletApp) {
         )
         .show_inside(ui_root, |ui| {
             ui.horizontal_centered(|ui| {
-                // Connection dot
-                let (dot_color, dot_text) = match &app.connection_status {
-                    ConnectionState::Connected => {
-                        (THEME.primary, app.t(app.node_sync.status_i18n_key()))
-                    }
-                    ConnectionState::Connecting => {
-                        (Color32::from_rgb(255, 179, 64), app.t("shell.connecting"))
-                    }
-                    ConnectionState::Error => {
-                        (THEME.danger, app.t(app.node_sync.status_i18n_key()))
-                    }
+                // Connection status pill — tone reflects the actual sync state
+                // (green synced / amber syncing / red error), not just orange.
+                let (tone, dot_text) = match &app.connection_status {
+                    ConnectionState::Connected => (
+                        widgets::sync_tone(app.node_sync.status),
+                        app.t(app.node_sync.status_i18n_key()),
+                    ),
+                    ConnectionState::Connecting => (widgets::Tone::Warn, app.t("shell.connecting")),
+                    ConnectionState::Error => (
+                        widgets::Tone::Danger,
+                        app.t(app.node_sync.status_i18n_key()),
+                    ),
                 };
-                let (rect, _) =
-                    ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
-                ui.painter().circle_filled(rect.center(), 5.0, dot_color);
-                ui.add_space(6.0);
-                ui.label(RichText::new(dot_text).size(12.0).color(THEME.text_mid));
+                widgets::status_pill(ui, tone, dot_text);
                 ui.add_space(10.0);
                 ui.label(
                     RichText::new(app.node_sync.sync_mode.label())
@@ -162,7 +159,7 @@ pub fn render(ui_root: &mut egui::Ui, app: &mut AliceWalletApp) {
             // Logo header — bare orange triangle, no box.
             ui.horizontal(|ui| {
                 ui.add(
-                    egui::Image::new(egui::include_image!("../../alice-logo-traced.svg"))
+                    egui::Image::new(egui::include_image!("../../assets/brand/alice-logo.svg"))
                         .fit_to_exact_size(egui::vec2(34.0, 34.0)),
                 );
                 ui.add_space(12.0);

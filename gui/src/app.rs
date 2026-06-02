@@ -1654,11 +1654,6 @@ impl eframe::App for AliceWalletApp {
             }
         }
 
-        // Esc closes review modals
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            if !self.busy {}
-        }
-
         // Background block poll when on main phase
         if self.phase == Phase::Main
             && !self.qa_mock_mode

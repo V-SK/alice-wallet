@@ -6,17 +6,12 @@ pub const DEFAULT_RPC_URL: &str = "wss://rpc.aliceprotocol.org";
 pub const DEFAULT_AUTO_LOCK_MINUTES: u32 = 10;
 pub const DATA_ROOT_ENV: &str = "ALICE_WALLET_DATA_ROOT";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Lang {
+    #[default]
     En,
     Zh,
-}
-
-impl Default for Lang {
-    fn default() -> Self {
-        Lang::En
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

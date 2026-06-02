@@ -408,7 +408,7 @@ fn encrypt_blob(plaintext: &[u8], key: &[u8; 32], aad: &[u8]) -> Result<(String,
         )
         .map_err(|e| format!("encryption failure: {}", e))?;
 
-    Ok((b64.encode(&ciphertext), b64.encode(&nonce_bytes)))
+    Ok((b64.encode(ciphertext), b64.encode(nonce_bytes)))
 }
 
 fn decrypt_blob(

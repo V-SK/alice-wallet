@@ -92,10 +92,7 @@ fn require_wss_url(url: &str) -> Result<(), String> {
     // Loopback-only exception for the wallet's own embedded node over plain ws.
     if scheme.eq_ignore_ascii_case("ws") {
         // Authority is everything up to the first '/', '?' or '#'.
-        let authority = rest
-            .split(|c| c == '/' || c == '?' || c == '#')
-            .next()
-            .unwrap_or(rest);
+        let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
         if host_is_loopback(authority) {
             return Ok(());
         }
@@ -319,10 +316,7 @@ pub fn sync_mode_from_url(url: &str) -> NodeSyncMode {
     if !(scheme.eq_ignore_ascii_case("ws") || scheme.eq_ignore_ascii_case("wss")) {
         return NodeSyncMode::Unavailable;
     }
-    let authority = rest
-        .split(|c| c == '/' || c == '?' || c == '#')
-        .next()
-        .unwrap_or(rest);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
     if host_is_loopback(authority) {
         NodeSyncMode::LocalNode
     } else {
@@ -439,8 +433,10 @@ fn validate_chain_identity(identity: Option<&ChainIdentityEvidence>) -> Result<(
     if identity.chain_name.trim() != ALICE_MAINNET_CHAIN_NAME {
         return Err("wrong_chain_name");
     }
-    if identity.genesis_hash.trim().to_ascii_lowercase()
-        != ALICE_MAINNET_GENESIS_HASH.to_ascii_lowercase()
+    if !identity
+        .genesis_hash
+        .trim()
+        .eq_ignore_ascii_case(ALICE_MAINNET_GENESIS_HASH)
     {
         return Err("wrong_genesis_hash");
     }
@@ -573,7 +569,7 @@ pub async fn get_balance(client: &Client, address: &str) -> Result<u128, String>
     let at_block = client.at_current_block().await.map_err(|e| e.to_string())?;
     let result = at_block
         .storage()
-        .try_fetch(storage_query, (Value::from_bytes(&account_id.0),))
+        .try_fetch(storage_query, (Value::from_bytes(account_id.0),))
         .await
         .map_err(|e| e.to_string())?;
 

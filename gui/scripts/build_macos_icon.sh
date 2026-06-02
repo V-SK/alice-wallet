@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SVG_PATH="${ROOT_DIR}/alice-logo-traced.svg"
+SVG_PATH="${ROOT_DIR}/assets/brand/alice-logo.svg"
 OUT_DIR="${ROOT_DIR}/assets/macos"
 ICONSET_DIR="${OUT_DIR}/AliceWallet.iconset"
 BASE_PNG="${OUT_DIR}/AliceWallet-1024.png"

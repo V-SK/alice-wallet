@@ -388,6 +388,16 @@ fn en(key: &str) -> &'static str {
         "node.save_mode" => "Apply node mode",
         "node.local_warning" => "A full local node downloads the chain and can use significant disk and bandwidth. First sync may take a while.",
 
+        // About
+        "about.title" => "About",
+        "about.tagline" => "Not all intelligence bends the knee.",
+        "about.blurb" => "A native, local-first wallet for the Alice network. Your keys are encrypted and never leave this device.",
+        "about.version" => "Version",
+        "about.security_title" => "Security posture",
+        "about.security_body" => "Seeds are encrypted with Argon2id + AES-256-GCM and held in memory only while unlocked. Remote nodes require an encrypted wss:// connection. Send execution is disabled in this build.",
+        "about.website" => "Website",
+        "about.website_url" => "aliceprotocol.org",
+
         _ => "",
     }
 }
@@ -777,6 +787,16 @@ fn zh(key: &str) -> &'static str {
         "node.restarts_used" => "已用自动重启次数",
         "node.save_mode" => "应用节点模式",
         "node.local_warning" => "全本地节点会下载整条链，可能占用大量磁盘和带宽。首次同步可能需要较长时间。",
+
+        // About
+        "about.title" => "关于",
+        "about.tagline" => "并非所有智能都会屈膝。",
+        "about.blurb" => "面向 Alice 网络的原生本地优先钱包。你的密钥经过加密，永不离开本设备。",
+        "about.version" => "版本",
+        "about.security_title" => "安全态势",
+        "about.security_body" => "助记词种子使用 Argon2id + AES-256-GCM 加密，仅在解锁期间驻留内存。远程节点必须使用加密的 wss:// 连接。本版本已禁用转账执行。",
+        "about.website" => "官网",
+        "about.website_url" => "aliceprotocol.org",
 
         _ => "",
     }
