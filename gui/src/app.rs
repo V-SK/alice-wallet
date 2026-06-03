@@ -872,12 +872,12 @@ impl AliceWalletApp {
     }
 
     pub fn lock_now(&mut self) {
-        // Stop the bundled miner when the wallet locks — it must never keep
-        // mining (and holding the reward identity on-wire) past a lock.
-        if self.miner_supervisor.is_active() {
-            self.miner_supervisor.request_stop();
-            self.miner_stats = MinerStats::default();
-        }
+        // The miner is intentionally NOT stopped on lock (V 2026-06-03): it only
+        // carries the user's PUBLIC Alice address (never a key/seed), so it is
+        // safe to keep mining while the wallet is locked. Locking still clears
+        // secrets + blocks balance/send/export below. The miner stops only on the
+        // explicit Stop button or on app exit — this is what lets mining persist
+        // in the background while the wallet is open (incl. through auto-lock).
         self.secrets = None;
         self.balance = None;
         self.clear_password_inputs();
