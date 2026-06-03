@@ -1,0 +1,10 @@
+# Release assets are SHA-256-pinned and bundled VERBATIM into the wallet, so they
+# must be byte-identical on every OS. Disable git's text/EOL conversion for them.
+# (Windows checkout was converting alice-mainnet-raw.json's LF -> CRLF, changing
+# its hash and breaking the fail-closed chain-spec verification at package + run.)
+gui/release-assets/alice-mainnet-raw.json -text
+gui/release-assets/* -text
+gui/release-assets/** -text
+
+# The brand SVG is copied into every OS package — keep it identical cross-OS.
+*.svg text eol=lf
