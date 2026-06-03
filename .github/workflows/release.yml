@@ -10,6 +10,8 @@ jobs:
   build:
     name: Build ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read   # gh release download (node binaries) needs read
     strategy:
       fail-fast: false
       matrix:
@@ -78,8 +80,10 @@ jobs:
         id: node_assets
         shell: bash
         env:
-          # Optional override; defaults to the public alice-chain node release.
-          NODE_BIN_BASE_URL: ${{ secrets.ALICE_NODE_BIN_BASE_URL }}
+          # Node binaries live in a SAME-REPO release (node-bin-v0.1.0); gh pulls
+          # them with this token, which works even while the repo is private.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ALICE_NODE_REL_TAG: ${{ vars.ALICE_NODE_REL_TAG }}
         run: |
           set -euo pipefail
           mkdir -p node-stage
@@ -95,17 +99,18 @@ jobs:
           if [ -d "gui/release-assets/${{ matrix.target }}" ]; then
             cp -v gui/release-assets/${{ matrix.target }}/* node-stage/ 2>/dev/null || true
           fi
-          NODE_REL="${NODE_BIN_BASE_URL:-https://github.com/V-SK/alice-chain/releases/download/node-v0.1.0}"
+          NODE_REL_TAG="${ALICE_NODE_REL_TAG:-node-bin-v0.1.0}"
           case "${{ matrix.target }}" in
             x86_64-unknown-linux-gnu) ASSET=solochain-template-node-linux-x86_64;      OUT=node-stage/solochain-template-node ;;
             x86_64-pc-windows-msvc)   ASSET=solochain-template-node-windows-x86_64.exe; OUT=node-stage/solochain-template-node.exe ;;
             aarch64-apple-darwin)     ASSET=solochain-template-node-macos-arm64;        OUT=node-stage/solochain-template-node ;;
             *) ASSET=""; OUT="" ;;
           esac
-          # Fetch only if not already staged from a committed asset.
+          # Fetch only if not already staged from a committed asset. Pulled from a
+          # SAME-REPO release with gh (GITHUB_TOKEN auth → works while private).
           if [ -n "$ASSET" ] && [ ! -f node-stage/solochain-template-node ] && [ ! -f node-stage/solochain-template-node.exe ]; then
-            echo "Fetching node binary: $NODE_REL/$ASSET"
-            curl -fsSL "$NODE_REL/$ASSET" -o "$OUT" || true
+            echo "Fetching node binary $ASSET from release $NODE_REL_TAG…"
+            gh release download "$NODE_REL_TAG" -R "$GITHUB_REPOSITORY" -p "$ASSET" -O "$OUT" --clobber || true
           fi
           if [ -f node-stage/solochain-template-node ] || [ -f node-stage/solochain-template-node.exe ]; then
             have_node=1
@@ -171,7 +176,7 @@ jobs:
           mkdir -p dist/AliceWallet
           cp gui/target/${{ matrix.target }}/release/gui dist/AliceWallet/AliceWallet
           chmod +x dist/AliceWallet/AliceWallet
-          cp gui/alice-logo-traced.svg dist/AliceWallet/
+          cp gui/assets/brand/alice-logo.svg dist/AliceWallet/
           # Embedded node (optional) — sibling layout per gui/src/node.rs.
           if [ -f node-stage/solochain-template-node ]; then
             cp node-stage/solochain-template-node dist/AliceWallet/
@@ -184,7 +189,7 @@ jobs:
           [Desktop Entry]
           Name=Alice Wallet
           Exec=AliceWallet
-          Icon=alice-logo-traced
+          Icon=alice-logo
           Type=Application
           Categories=Finance;
           EOF
@@ -202,7 +207,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force dist/AliceWallet | Out-Null
           Copy-Item gui/target/${{ matrix.target }}/release/gui.exe dist/AliceWallet/AliceWallet.exe
-          Copy-Item gui/alice-logo-traced.svg dist/AliceWallet/
+          Copy-Item gui/assets/brand/alice-logo.svg dist/AliceWallet/
           # Embedded node (optional) — sibling layout per gui/src/node.rs.
           if (Test-Path node-stage/solochain-template-node.exe) {
             Copy-Item node-stage/solochain-template-node.exe dist/AliceWallet/
@@ -220,7 +225,7 @@ jobs:
           mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
           cp gui/target/${{ matrix.target }}/release/gui "$APP/Contents/MacOS/AliceWallet"
           chmod +x "$APP/Contents/MacOS/AliceWallet"
-          cp gui/alice-logo-traced.svg "$APP/Contents/Resources/"
+          cp gui/assets/brand/alice-logo.svg "$APP/Contents/Resources/"
           # Embedded node (optional): binary beside the wallet in MacOS/, spec
           # in Resources/ — matches gui/src/node.rs resolution candidates.
           if [ -f node-stage/solochain-template-node ]; then
