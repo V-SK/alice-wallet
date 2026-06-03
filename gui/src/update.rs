@@ -46,7 +46,7 @@ pub const RELEASE_PUBKEY_B64: &str = "8P+XmZZFEsUHLmqeB62Xqr5GnwW5K9vf2sQHvRzfi5
 /// NOTE for V: the repo slug below is a PLACEHOLDER — pin it to the real public
 /// releases repo before cutting a release (see docs/UPDATE-SCHEME.md).
 pub const DEFAULT_UPDATE_URL: &str =
-    "https://github.com/aliceprotocol/alice-wallet/releases/latest/download/latest.json";
+    "https://github.com/V-SK/alice-wallet/releases/latest/download/latest.json";
 
 /// Env override for the manifest URL.
 pub const UPDATE_URL_ENV: &str = "ALICE_WALLET_UPDATE_URL";
