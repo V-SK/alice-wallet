@@ -78,7 +78,8 @@ jobs:
         id: node_assets
         shell: bash
         env:
-          NODE_BIN_URL: ${{ secrets.ALICE_NODE_BIN_URL }}
+          # Optional override; defaults to the public alice-chain node release.
+          NODE_BIN_BASE_URL: ${{ secrets.ALICE_NODE_BIN_BASE_URL }}
         run: |
           set -euo pipefail
           mkdir -p node-stage
@@ -88,17 +89,23 @@ jobs:
           if [ -f "gui/release-assets/alice-mainnet-raw.json" ]; then
             cp -v gui/release-assets/alice-mainnet-raw.json node-stage/alice-mainnet-raw.json
           fi
-          # 2) Per-OS node binary: committed assets take precedence, else the
-          #    per-OS download URL (from alice-chain's node-release.yml).
+          # 2) Per-OS node binary: committed assets take precedence (e.g. macOS
+          #    ships its node committed under gui/release-assets/<target>/), else
+          #    fetch the matching per-OS binary from alice-chain's node release.
           if [ -d "gui/release-assets/${{ matrix.target }}" ]; then
             cp -v gui/release-assets/${{ matrix.target }}/* node-stage/ 2>/dev/null || true
           fi
-          if [ -n "${NODE_BIN_URL:-}" ]; then
-            if [ "${{ runner.os }}" = "Windows" ]; then
-              curl -fsSL "$NODE_BIN_URL" -o node-stage/solochain-template-node.exe || true
-            else
-              curl -fsSL "$NODE_BIN_URL" -o node-stage/solochain-template-node || true
-            fi
+          NODE_REL="${NODE_BIN_BASE_URL:-https://github.com/V-SK/alice-chain/releases/download/node-v0.1.0}"
+          case "${{ matrix.target }}" in
+            x86_64-unknown-linux-gnu) ASSET=solochain-template-node-linux-x86_64;      OUT=node-stage/solochain-template-node ;;
+            x86_64-pc-windows-msvc)   ASSET=solochain-template-node-windows-x86_64.exe; OUT=node-stage/solochain-template-node.exe ;;
+            aarch64-apple-darwin)     ASSET=solochain-template-node-macos-arm64;        OUT=node-stage/solochain-template-node ;;
+            *) ASSET=""; OUT="" ;;
+          esac
+          # Fetch only if not already staged from a committed asset.
+          if [ -n "$ASSET" ] && [ ! -f node-stage/solochain-template-node ] && [ ! -f node-stage/solochain-template-node.exe ]; then
+            echo "Fetching node binary: $NODE_REL/$ASSET"
+            curl -fsSL "$NODE_REL/$ASSET" -o "$OUT" || true
           fi
           if [ -f node-stage/solochain-template-node ] || [ -f node-stage/solochain-template-node.exe ]; then
             have_node=1
@@ -109,6 +116,30 @@ jobs:
           echo "have_node=$have_node" >> "$GITHUB_OUTPUT"
           echo "have_spec=$have_spec" >> "$GITHUB_OUTPUT"
           echo "Node bundling: have_node=$have_node have_spec=$have_spec"
+
+      # Fail-closed: a staged node binary MUST match the per-OS SHA-256 pinned
+      # here (the wallet vouches for exactly this node build). Committed macOS
+      # node and the fetched Linux/Windows binaries are all verified; a wrong or
+      # tampered binary aborts the build so it can never be packaged.
+      - name: Verify staged node binary SHA-256 == pinned
+        if: steps.node_assets.outputs.have_node == '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ matrix.target }}" in
+            x86_64-unknown-linux-gnu) PIN=2179fd0dd11474df3ab2558a53cb0ed2fb182d87c15b575ba972a0f4791ebeff; BIN=node-stage/solochain-template-node ;;
+            x86_64-pc-windows-msvc)   PIN=4b59737a59b504fe93dc276d0397a00c89138ccfc1f74423d3d9ee174f0c34b9; BIN=node-stage/solochain-template-node.exe ;;
+            aarch64-apple-darwin)     PIN=68e128bc3864393ba8cdeb71537300e66d5a10ebc35a112e922a2cc4f68e8a3b; BIN=node-stage/solochain-template-node ;;
+            *) PIN=""; BIN="" ;;
+          esac
+          if [ -z "$PIN" ]; then echo "::error::no pinned node SHA for target ${{ matrix.target }}" >&2; exit 1; fi
+          if command -v sha256sum >/dev/null 2>&1; then ACT=$(sha256sum "$BIN" | awk '{print $1}'); else ACT=$(shasum -a 256 "$BIN" | awk '{print $1}'); fi
+          echo "pinned=$PIN"; echo "staged=$ACT"
+          if [ "$PIN" != "$ACT" ]; then
+            echo "::error::staged node binary SHA-256 ($ACT) != pinned ($PIN) — refusing to package" >&2
+            exit 1
+          fi
+          echo "Node binary integrity OK (matches pin)."
 
       # Fail-closed: if a spec is staged it MUST hash to the pin baked into
       # gui/src/node.rs. A wrong/corrupted spec aborts the whole release build —
@@ -231,24 +262,10 @@ jobs:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}
 
-  release:
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
-      - name: Generate SHA256SUMS
-        run: |
-          cd artifacts
-          sha256sum * > SHA256SUMS
-          cat SHA256SUMS
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: artifacts/*
-          generate_release_notes: true
+  # NOTE: There is intentionally NO "release" / "Create Release" job.
+  # The release manifest (latest.json) and SHA256SUMS are signed OFFLINE with the
+  # project's ed25519 release key, which never touches CI (see README "Releasing"
+  # and gui/scripts/release.sh). CI's job ends at building + uploading per-OS
+  # artifacts; a maintainer downloads them, signs locally, and publishes the
+  # GitHub release by hand. This keeps the signing key offline and removes any
+  # chance of an unsigned/auto-generated release clobbering a signed one.
