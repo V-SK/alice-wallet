@@ -49,6 +49,58 @@ RELEASE_KEY="${ALICE_RELEASE_KEY:-${HOME}/.alice-release/alice-update-ed25519.ke
 # Default mirrors gui/src/update.rs::DEFAULT_UPDATE_URL's directory.
 BASE_URL="${ALICE_RELEASE_BASE_URL:-}"
 
+# ── Embedded-node bundling ("bundle monerod") ───────────────────────────────
+# The wallet manages a child `solochain-template-node`. The canonical raw chain
+# spec is committed and shared across all OSes; only the per-OS node binary
+# differs. Each per-OS wallet artifact ships the matching binary + the spec as
+# siblings of the wallet exe (see gui/src/node.rs::resolve_node_binary /
+# resolve_chain_spec). The spec is verified fail-closed against the SHA-256
+# pinned in gui/src/node.rs before it is ever packaged.
+#
+# Committed spec (shared): gui/release-assets/alice-mainnet-raw.json
+CHAIN_SPEC_SRC="${ALICE_CHAIN_SPEC_FILE:-${ROOT_DIR}/release-assets/alice-mainnet-raw.json}"
+# Per-OS node binary: committed under gui/release-assets/<triple>/ OR pointed at
+# by ALICE_NODE_BIN_<triple-with-underscores> / ALICE_NODE_BIN (a local path).
+# When absent, the artifact still ships (Remote-node mode); a notice is printed.
+
+# Read the pinned spec SHA-256 straight from node.rs so this never drifts.
+pinned_spec_sha256() {
+  grep -oE '"[0-9a-f]{64}"' "${ROOT_DIR}/src/node.rs" | head -1 | tr -d '"'
+}
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}';
+  else shasum -a 256 "$1" | awk '{print $1}'; fi
+}
+
+# Resolve the node binary for a given rust triple. Echoes a path or empty.
+resolve_node_bin_for() {
+  local triple="$1" want_exe="$2"   # want_exe=1 => windows .exe
+  local committed_dir="${ROOT_DIR}/release-assets/${triple}"
+  local fname="solochain-template-node"; [[ "${want_exe}" == "1" ]] && fname="solochain-template-node.exe"
+  # 1) committed asset
+  if [[ -f "${committed_dir}/${fname}" ]]; then echo "${committed_dir}/${fname}"; return; fi
+  # 2) explicit per-triple env override (a local path)
+  local var="ALICE_NODE_BIN_$(echo "${triple}" | tr '-' '_')"
+  local val="${!var:-}"
+  [[ -z "${val}" ]] && val="${ALICE_NODE_BIN:-}"
+  if [[ -n "${val}" && -f "${val}" ]]; then echo "${val}"; return; fi
+  echo ""
+}
+
+# Verify + copy the bundled spec into a staging dir (fail-closed on SHA pin).
+stage_chain_spec() {
+  local dest="$1"
+  [[ -f "${CHAIN_SPEC_SRC}" ]] || { echo ""; return; }
+  local pin act; pin="$(pinned_spec_sha256)"; act="$(sha256_of "${CHAIN_SPEC_SRC}")"
+  if [[ -z "${pin}" ]]; then echo "  ! could not read pinned spec SHA from src/node.rs" >&2; exit 1; fi
+  if [[ "${pin}" != "${act}" ]]; then
+    echo "  !! chain spec SHA-256 mismatch: pinned=${pin} actual=${act} — refusing to bundle" >&2
+    exit 1
+  fi
+  cp "${CHAIN_SPEC_SRC}" "${dest}/alice-mainnet-raw.json"
+  echo "${dest}/alice-mainnet-raw.json"
+}
+
 # Map a platform key -> rust target triple + artifact filename.
 target_triple() {
   case "$1" in
@@ -133,6 +185,17 @@ for plat in ${TARGETS}; do
       mkdir -p "${app}/Contents/MacOS" "${app}/Contents/Resources"
       cp "${ROOT_DIR}/target/${triple}/release/gui" "${app}/Contents/MacOS/AliceWallet"
       chmod +x "${app}/Contents/MacOS/AliceWallet"
+      # Embedded node: binary beside the wallet in MacOS/, spec in Resources/
+      # (matches gui/src/node.rs resolution candidates). Spec is SHA-pinned.
+      nb="$(resolve_node_bin_for "${triple}" 0)"
+      if [[ -n "${nb}" ]]; then
+        cp "${nb}" "${app}/Contents/MacOS/solochain-template-node"
+        chmod +x "${app}/Contents/MacOS/solochain-template-node"
+        echo "  + bundled node binary ($(sha256_of "${nb}" | cut -c1-12)…)"
+      else
+        echo "  ~ no node binary for ${triple} — wallet ships in Remote-node mode"
+      fi
+      [[ -n "$(stage_chain_spec "${app}/Contents/Resources")" ]] && echo "  + bundled chain spec (SHA-pinned)"
       cat > "${app}/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -157,11 +220,29 @@ PLIST
       d="${stage}/AliceWallet"; mkdir -p "${d}"
       cp "${ROOT_DIR}/target/${triple}/release/gui" "${d}/AliceWallet"
       chmod +x "${d}/AliceWallet"
+      # Embedded node + spec as siblings of the wallet exe (gui/src/node.rs).
+      nb="$(resolve_node_bin_for "${triple}" 0)"
+      if [[ -n "${nb}" ]]; then
+        cp "${nb}" "${d}/solochain-template-node"; chmod +x "${d}/solochain-template-node"
+        echo "  + bundled node binary ($(sha256_of "${nb}" | cut -c1-12)…)"
+      else
+        echo "  ~ no node binary for ${triple} — wallet ships in Remote-node mode"
+      fi
+      [[ -n "$(stage_chain_spec "${d}")" ]] && echo "  + bundled chain spec (SHA-pinned)"
       ( cd "${stage}" && tar -czf "${OUT_DIR}/${artifact}" "AliceWallet" )
       ;;
     windows-x86_64)
       d="${stage}/AliceWallet"; mkdir -p "${d}"
       cp "${ROOT_DIR}/target/${triple}/release/gui.exe" "${d}/AliceWallet.exe"
+      # Embedded node + spec as siblings of the wallet exe (gui/src/node.rs).
+      nb="$(resolve_node_bin_for "${triple}" 1)"
+      if [[ -n "${nb}" ]]; then
+        cp "${nb}" "${d}/solochain-template-node.exe"
+        echo "  + bundled node binary ($(sha256_of "${nb}" | cut -c1-12)…)"
+      else
+        echo "  ~ no node binary for ${triple} — wallet ships in Remote-node mode"
+      fi
+      [[ -n "$(stage_chain_spec "${d}")" ]] && echo "  + bundled chain spec (SHA-pinned)"
       # zip via `ditto` on macOS host, else `zip`.
       if command -v ditto >/dev/null 2>&1; then
         ( cd "${stage}" && ditto -c -k --keepParent "AliceWallet" "${OUT_DIR}/${artifact}" )

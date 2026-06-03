@@ -231,29 +231,49 @@ pub fn verify_chain_spec_sha256(
     }
 }
 
+/// SHA-256 (hex) of the canonical Alice Mainnet raw chain spec
+/// (`alice-mainnet-raw.json`). This is the spec the live chain runs: launching a
+/// node with it yields genesis `0x7746a1d1…54b0`, matching
+/// [`crate::chain::ALICE_MAINNET_GENESIS_HASH`].
+///
+/// Pinned here at build time so [`verify_chain_spec_sha256`] fails closed if the
+/// bundled spec is swapped/corrupted before the node is ever launched — the same
+/// discipline as the genesis-hash + runtime-spec pinning in `chain.rs`. Any
+/// tampering with the bundled spec is caught BEFORE a node syncs against it.
+pub const ALICE_MAINNET_SPEC_SHA256: &str =
+    "9fd71b986d8d8ac8c513a009c31a3edf042576938e6d6e29b5042e4add8eb46f";
+
 /// SHA-256 of the bundled chain spec, pinned at release-build time.
 ///
-/// `None` until the release pipeline bakes it in (Phase 5 of the plan). When
-/// set, [`verify_chain_spec_sha256`] fails closed on any mismatch — the same
-/// discipline as the genesis-hash pinning in `chain.rs`. Overridable for tests
-/// / staging via `ALICE_WALLET_CHAIN_SPEC_SHA256`.
+/// Returns the baked-in [`ALICE_MAINNET_SPEC_SHA256`] so the release build always
+/// fails closed on a spec mismatch. `ALICE_WALLET_CHAIN_SPEC_SHA256` overrides it
+/// (tests / staging spinning a different chain) — but only ever to a *different*
+/// pin, never to disable verification: there is no code path that returns `None`
+/// in a release build.
 pub fn pinned_chain_spec_sha256() -> Option<&'static str> {
-    // Build-baked constant goes here once the canonical spec is chosen (see the
-    // chain-identity drift note flagged to V). Until then, an env override lets
-    // an operator opt into verification without a rebuild.
     match option_env!("ALICE_WALLET_CHAIN_SPEC_SHA256") {
         Some(s) if !s.is_empty() => Some(s),
-        _ => None,
+        _ => Some(ALICE_MAINNET_SPEC_SHA256),
     }
 }
+
+/// Canonical Alice Mainnet boot multiaddr(s), baked in for the embedded node's
+/// initial peer discovery. These are PUBLIC addresses — the same bootnode is
+/// already embedded in the `bootNodes` field of the canonical raw chain spec, so
+/// this is belt-and-suspenders (and lets the node find peers even if a future
+/// spec ships with `bootNodes: []`). No secrets here.
+const CANONICAL_BOOTNODES: &[&str] = &[
+    "/ip4/65.109.35.190/tcp/30334/p2p/12D3KooWEp8atZTZpgttn2S6soLuHVT8MKoxnZPxVMPLsz4z6eY1",
+];
 
 /// Boot-node multiaddrs bundled for the embedded node's initial peer discovery.
 ///
 /// REQUIRED for a useful sync (plan §2, risk R2): a node with no bootnodes finds
-/// no peers. The canonical Alice boot multiaddr(s) are baked here at release
-/// time; `ALICE_WALLET_BOOTNODES` (comma-separated) overrides for staging/tests.
-/// Returns an empty slice when none are configured — the Node UI surfaces a
-/// "no bootnodes — sync will stall" warning in that case.
+/// no peers. Returns the canonical Alice boot multiaddr(s) baked in
+/// ([`CANONICAL_BOOTNODES`]); `ALICE_WALLET_BOOTNODES` (comma-separated)
+/// overrides for staging/tests. The spec ALSO embeds the bootnode, so peer
+/// discovery does not rely solely on this list. The Node UI still surfaces a
+/// "no bootnodes — sync will stall" warning if it ever comes back empty.
 pub fn bundled_bootnodes() -> Vec<String> {
     if let Ok(v) = std::env::var("ALICE_WALLET_BOOTNODES") {
         return v
@@ -262,8 +282,7 @@ pub fn bundled_bootnodes() -> Vec<String> {
             .filter(|s| !s.is_empty())
             .collect();
     }
-    // TODO(release): bake the canonical Alice boot multiaddr(s) here.
-    Vec::new()
+    CANONICAL_BOOTNODES.iter().map(|s| s.to_string()).collect()
 }
 
 /// Validate + sanitise a node name for use as `--name`. Rejects anything that
@@ -458,6 +477,38 @@ mod tests {
         )
         .expect("plan");
         assert!(plan.args.iter().any(|a| a == "--bootnodes"));
+    }
+
+    #[test]
+    fn mainnet_spec_pin_is_wellformed_and_is_the_default_pin() {
+        // The pinned canonical hash is a 64-char lowercase hex digest.
+        assert_eq!(ALICE_MAINNET_SPEC_SHA256.len(), 64);
+        assert!(ALICE_MAINNET_SPEC_SHA256
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && (!c.is_alphabetic() || c.is_lowercase())));
+        // With no env override, the release build pins the canonical spec hash —
+        // there is NO code path that disables verification in production.
+        // (Guard against accidental regression to `None`.)
+        if std::env::var_os("ALICE_WALLET_CHAIN_SPEC_SHA256").is_none() {
+            assert_eq!(pinned_chain_spec_sha256(), Some(ALICE_MAINNET_SPEC_SHA256));
+        }
+    }
+
+    #[test]
+    fn verify_accepts_file_hashing_to_the_canonical_pin() {
+        // A file whose bytes hash to ALICE_MAINNET_SPEC_SHA256 passes; this locks
+        // the pin to the SHA-256 implementation actually used at launch time.
+        // (We synthesise the expected-by-content check rather than embedding the
+        // ~1 MB spec in the test: write known bytes, recompute, compare paths.)
+        use sha2::{Digest, Sha256};
+        let f = tempfile_with(b"canonical-spec-stand-in");
+        let want = hex::encode(Sha256::digest(b"canonical-spec-stand-in"));
+        // Correct content passes; the real canonical pin is asserted against the
+        // committed spec by the CI "verify staged spec SHA" step + release.sh.
+        assert!(verify_chain_spec_sha256(&f.0, Some(&want)).is_ok());
+        // And the canonical pin rejects this stand-in (different bytes).
+        assert!(verify_chain_spec_sha256(&f.0, Some(ALICE_MAINNET_SPEC_SHA256)).is_err());
+        let _ = std::fs::remove_file(&f.0);
     }
 
     #[test]

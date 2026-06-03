@@ -56,47 +56,82 @@ jobs:
         run: cargo build --release --target ${{ matrix.target }}
 
       # ----------------------------------------------------------------------
-      # Optional embedded-node bundling (the "bundle monerod" half).
+      # Embedded-node bundling (the "bundle monerod" half).
       #
-      # The all-in-one wallet manages a child `solochain-template-node`. When a
-      # prebuilt node binary + raw chain spec are provided for this target, they
-      # are copied alongside the wallet so it can launch a local node. The
-      # wallet resolves these as siblings of its own executable (see
-      # gui/src/node.rs::resolve_node_binary / resolve_chain_spec).
+      # The all-in-one wallet manages a child `solochain-template-node`. The raw
+      # chain spec is COMMITTED (gui/release-assets/alice-mainnet-raw.json) and is
+      # the same on every OS — only the node BINARY differs per target. The
+      # per-OS node binary is supplied either committed under
+      # gui/release-assets/<target>/ or via the ALICE_NODE_BIN_URL secret (a
+      # per-OS download URL — point it at the artifact from alice-chain's
+      # node-release.yml matrix). Both are copied alongside the wallet so it can
+      # launch a local node; the wallet resolves them as siblings of its own
+      # executable (see gui/src/node.rs::resolve_node_binary / resolve_chain_spec).
       #
-      # Provide them via repo secrets/vars (per-OS download URLs) OR commit them
-      # under gui/release-assets/<target>/. If absent, the wallet still ships and
-      # works in Remote-node mode (headline local-node feature shows a clear
-      # "node binary not bundled" notice). This keeps CI green before V supplies
-      # the per-OS node binaries (flagged as a release step).
+      # The spec is verified against the SHA-256 pinned in gui/src/node.rs
+      # (ALICE_MAINNET_SPEC_SHA256) — a fail-closed gate so a wrong spec can NEVER
+      # ship. If the node binary is absent the wallet still ships and works in
+      # Remote-node mode (the Node page shows a clear "node binary not bundled"
+      # notice); this keeps CI green before V supplies the per-OS node binaries.
       # ----------------------------------------------------------------------
-      - name: Stage node binary + chain spec (if available)
+      - name: Stage node binary + chain spec
         id: node_assets
         shell: bash
         env:
           NODE_BIN_URL: ${{ secrets.ALICE_NODE_BIN_URL }}
-          CHAIN_SPEC_URL: ${{ secrets.ALICE_CHAIN_SPEC_URL }}
         run: |
           set -euo pipefail
           mkdir -p node-stage
           have_node=0
           have_spec=0
-          # 1) committed assets take precedence.
+          # 1) The canonical chain spec is committed and shared across all OSes.
+          if [ -f "gui/release-assets/alice-mainnet-raw.json" ]; then
+            cp -v gui/release-assets/alice-mainnet-raw.json node-stage/alice-mainnet-raw.json
+          fi
+          # 2) Per-OS node binary: committed assets take precedence, else the
+          #    per-OS download URL (from alice-chain's node-release.yml).
           if [ -d "gui/release-assets/${{ matrix.target }}" ]; then
             cp -v gui/release-assets/${{ matrix.target }}/* node-stage/ 2>/dev/null || true
           fi
-          # 2) download URLs (per-OS) if provided.
           if [ -n "${NODE_BIN_URL:-}" ]; then
-            curl -fsSL "$NODE_BIN_URL" -o node-stage/solochain-template-node || true
+            if [ "${{ runner.os }}" = "Windows" ]; then
+              curl -fsSL "$NODE_BIN_URL" -o node-stage/solochain-template-node.exe || true
+            else
+              curl -fsSL "$NODE_BIN_URL" -o node-stage/solochain-template-node || true
+            fi
           fi
-          if [ -n "${CHAIN_SPEC_URL:-}" ]; then
-            curl -fsSL "$CHAIN_SPEC_URL" -o node-stage/alice-mainnet-raw.json || true
+          if [ -f node-stage/solochain-template-node ] || [ -f node-stage/solochain-template-node.exe ]; then
+            have_node=1
           fi
-          [ -f node-stage/solochain-template-node ] || [ -f node-stage/solochain-template-node.exe ] && have_node=1 || true
-          [ -f node-stage/alice-mainnet-raw.json ] && have_spec=1 || true
+          if [ -f node-stage/alice-mainnet-raw.json ]; then
+            have_spec=1
+          fi
           echo "have_node=$have_node" >> "$GITHUB_OUTPUT"
           echo "have_spec=$have_spec" >> "$GITHUB_OUTPUT"
           echo "Node bundling: have_node=$have_node have_spec=$have_spec"
+
+      # Fail-closed: if a spec is staged it MUST hash to the pin baked into
+      # gui/src/node.rs. A wrong/corrupted spec aborts the whole release build —
+      # it can never be packaged. Skipped only when no spec is staged at all.
+      - name: Verify staged chain spec SHA-256 == pinned
+        if: steps.node_assets.outputs.have_spec == '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          PIN=$(grep -oE '"[0-9a-f]{64}"' gui/src/node.rs | head -1 | tr -d '"')
+          if [ -z "$PIN" ]; then echo "could not read pinned spec SHA from node.rs" >&2; exit 1; fi
+          if command -v sha256sum >/dev/null 2>&1; then
+            ACT=$(sha256sum node-stage/alice-mainnet-raw.json | awk '{print $1}')
+          else
+            ACT=$(shasum -a 256 node-stage/alice-mainnet-raw.json | awk '{print $1}')
+          fi
+          echo "pinned=$PIN"
+          echo "staged=$ACT"
+          if [ "$PIN" != "$ACT" ]; then
+            echo "::error::staged chain spec SHA-256 ($ACT) != pinned ($PIN) — refusing to package" >&2
+            exit 1
+          fi
+          echo "Chain spec integrity OK (matches pin)."
 
       # ---------- Linux package ----------
       - name: Package Linux

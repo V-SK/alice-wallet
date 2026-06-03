@@ -906,8 +906,9 @@ impl AliceWalletApp {
     pub fn build_node_launch(&self) -> Result<node::NodeLaunchPlan, String> {
         let program = node::resolve_node_binary()?;
         let spec = node::resolve_chain_spec()?;
-        // SHA pin is None until baked into the release build (Phase 5); this is
-        // the fail-closed seam, not a no-op in production.
+        // Fail-closed integrity gate: the bundled spec MUST hash to the pinned
+        // canonical SHA-256 (node::ALICE_MAINNET_SPEC_SHA256) before the node is
+        // ever launched against it. A swapped/corrupted spec aborts the launch.
         node::verify_chain_spec_sha256(&spec, node::pinned_chain_spec_sha256())?;
         node::build_node_launch_plan(
             program,
