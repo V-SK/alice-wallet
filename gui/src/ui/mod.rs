@@ -13,4 +13,5 @@ pub mod settings;
 pub mod shell;
 pub mod theme;
 pub mod unlock;
+pub mod update_prompt;
 pub mod widgets;

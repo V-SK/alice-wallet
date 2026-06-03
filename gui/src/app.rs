@@ -137,6 +137,70 @@ pub enum AsyncResult {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// Self-update plumbing (separate worker thread; blocking + off the subxt stack)
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Shared slot holding the egui repaint context once the first frame has run,
+/// so the updater thread can wake a sleeping UI the moment an event is ready.
+pub type UpdateRepaint = Arc<std::sync::Mutex<Option<egui::Context>>>;
+
+/// Work sent to the dedicated updater thread. Kept off the tokio/subxt worker so
+/// the blocking HTTP updater never shares the async runtime (briefing invariant).
+pub enum UpdateRequest {
+    /// Fetch + verify the signed manifest and evaluate it against this build.
+    Check,
+    /// Apply a verified-available update: download, verify, (codesign), swap.
+    Apply {
+        artifact: crate::update::Artifact,
+        version: String,
+    },
+}
+
+/// Events from the updater thread back to the GUI.
+pub enum UpdateEvent {
+    /// A completed check (Ok outcome, or a human-readable failure string). The
+    /// outcome carries a full manifest, so it is boxed to keep this enum small.
+    CheckResult(std::result::Result<Box<crate::update::CheckOutcome>, String>),
+    /// Coarse progress text shown in the apply prompt ("Downloading…" etc.).
+    ApplyProgress(String),
+    /// Apply succeeded: the new version is installed and a relaunch is armed.
+    Applied { version: String },
+    /// Apply failed before/while installing; nothing was left half-swapped.
+    ApplyFailed(String),
+}
+
+/// GUI-side self-update state surfaced to the user (never silent-applies).
+#[derive(Default)]
+pub struct UpdateUi {
+    /// Most recent successful check outcome (drives the prompt / hard-block).
+    pub outcome: Option<crate::update::CheckOutcome>,
+    /// User dismissed the available-update prompt for this session (a hard
+    /// `Unsupported` block is NOT dismissable and ignores this).
+    pub dismissed: bool,
+    /// An apply is in flight (download/verify/swap); the prompt shows progress.
+    pub applying: bool,
+    /// Latest progress line during an apply.
+    pub progress: Option<String>,
+    /// Last apply error, shown inline in the prompt.
+    pub error: Option<String>,
+    /// Set once an apply has installed a new version and armed a relaunch; the
+    /// UI then offers "Relaunch now".
+    pub ready_to_relaunch: Option<String>,
+    /// When the next automatic background check is due.
+    pub next_check_at: Option<Instant>,
+    /// A one-time confirmation that THIS launch is a freshly-installed update
+    /// whose health we just committed (surfaced as a toast).
+    pub just_updated_to: Option<String>,
+    /// THIS launch is a freshly-installed build still on health probation; once
+    /// the GUI has rendered healthily past `health_confirm_at` we commit it.
+    pub pending_health_confirm: bool,
+    /// Deadline after which an un-crashed fresh build is deemed healthy.
+    pub health_confirm_at: Option<Instant>,
+    /// A prior launch's new build failed and was rolled back (surfaced once).
+    pub rolled_back_from: Option<String>,
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 
 pub struct AliceWalletApp {
     pub qa_mock_mode: bool,
@@ -214,6 +278,17 @@ pub struct AliceWalletApp {
     // async
     pub tx: Sender<AsyncAction>,
     pub rx: Receiver<AsyncResult>,
+
+    // self-update (dedicated blocking worker; off the subxt/tokio stack)
+    pub update_tx: Sender<UpdateRequest>,
+    pub update_rx: Receiver<UpdateEvent>,
+    pub update_ui: UpdateUi,
+    /// The live app location this build would replace (for relaunch/rollback).
+    pub app_path: Option<std::path::PathBuf>,
+    /// Shared repaint waker handed to the updater thread (filled on first frame).
+    update_repaint: Option<UpdateRepaint>,
+    /// Set once we've registered the egui repaint waker with the updater thread.
+    update_ctx_registered: bool,
 }
 
 impl AliceWalletApp {
@@ -244,6 +319,37 @@ impl AliceWalletApp {
         let rt = Arc::new(rt);
         let node_supervisor = NodeSupervisor::new();
         spawn_worker(rt.clone(), worker_rx, worker_tx, node_supervisor.clone());
+
+        // Dedicated updater thread + its repaint waker (filled on first frame).
+        let (update_tx, update_worker_rx) = channel::<UpdateRequest>();
+        let (update_worker_tx, update_rx) = channel::<UpdateEvent>();
+        let update_repaint: UpdateRepaint = Arc::new(std::sync::Mutex::new(None));
+        spawn_update_worker(update_worker_rx, update_worker_tx, update_repaint.clone());
+
+        // Resolve the live app path once; updates target ONLY this location and
+        // it is re-checked against the data dir before any swap.
+        let app_path = if qa_mock_mode {
+            None
+        } else {
+            crate::update::current_app_path().ok()
+        };
+
+        // Resolve the first-launch health gate before arming any new check. A
+        // crash-looping new build is rolled back here; a fresh first run is left
+        // on probation until the GUI proves healthy (see `tick_update`).
+        let mut pending_health_confirm = false;
+        let mut rolled_back_from: Option<String> = None;
+        if let Some(app) = app_path.as_ref() {
+            match crate::update::register_launch(app, crate::update::current_version()) {
+                Ok(crate::update::LaunchDecision::FreshFirstRun { .. }) => {
+                    pending_health_confirm = true;
+                }
+                Ok(crate::update::LaunchDecision::RolledBack { failed_version }) => {
+                    rolled_back_from = Some(failed_version);
+                }
+                _ => {}
+            }
+        }
 
         let mut app = Self {
             qa_mock_mode,
@@ -304,7 +410,25 @@ impl AliceWalletApp {
             last_node_proc_poll: None,
             tx: gui_tx,
             rx: gui_rx,
+            update_tx,
+            update_rx,
+            update_ui: UpdateUi {
+                pending_health_confirm,
+                health_confirm_at: if pending_health_confirm {
+                    Some(Instant::now() + Duration::from_secs(8))
+                } else {
+                    None
+                },
+                rolled_back_from,
+                ..UpdateUi::default()
+            },
+            app_path,
+            update_repaint: None,
+            update_ctx_registered: false,
         };
+        // Stash the repaint waker so the updater thread can wake the UI; filled
+        // with the real egui context on the first frame.
+        app.update_repaint = Some(update_repaint);
 
         if app.qa_mock_mode {
             app.enable_qa_mock_mode();
@@ -1036,10 +1160,11 @@ fn env_flag(name: &str) -> bool {
 mod tests {
     use super::*;
     use rand::RngCore;
-    use std::sync::Mutex;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    /// Shared, process-wide env lock so these tests serialize against the env
+    /// tests in OTHER modules (e.g. `update`) that also set `ALICE_WALLET_DATA_ROOT`.
+    use crate::config::TEST_ENV_LOCK as ENV_LOCK;
 
     fn phase40t_temp_root(label: &str) -> std::path::PathBuf {
         let stamp = SystemTime::now()
@@ -1056,7 +1181,7 @@ mod tests {
 
     #[test]
     fn qa_mock_mode_uses_display_only_wallet_and_skips_network_refresh() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("ALICE_WALLET_QA_MOCK", "1");
         let rt = Runtime::new().expect("runtime");
         let mut app = AliceWalletApp::new(rt);
@@ -1080,7 +1205,7 @@ mod tests {
 
     #[test]
     fn qa_mock_mode_can_open_pages_and_auth_flows_without_wallet_data() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("ALICE_WALLET_QA_MOCK", "1");
         std::env::set_var("ALICE_WALLET_QA_PAGE", "mining");
         let rt = Runtime::new().expect("runtime");
@@ -1113,7 +1238,7 @@ mod tests {
 
     #[test]
     fn owner_test_data_root_launches_without_qa_mock_and_stays_isolated() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let root = phase40t_temp_root("data-root");
         std::env::remove_var("ALICE_WALLET_QA_MOCK");
         std::env::set_var("ALICE_WALLET_DATA_ROOT", &root);
@@ -1135,7 +1260,7 @@ mod tests {
 
     #[test]
     fn owner_test_network_disabled_fails_closed_without_rpc_refresh() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let root = phase40t_temp_root("network-disabled");
         std::env::remove_var("ALICE_WALLET_QA_MOCK");
         std::env::set_var("ALICE_WALLET_DATA_ROOT", &root);
@@ -1159,7 +1284,7 @@ mod tests {
 
     #[test]
     fn phase40t_evidence_mode_is_no_mock_isolated_redacted_and_fail_closed() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let root = phase40t_temp_root("evidence-mode");
         std::env::remove_var("ALICE_WALLET_QA_MOCK");
         std::env::set_var("ALICE_WALLET_DATA_ROOT", &root);
@@ -1195,7 +1320,7 @@ mod tests {
 
     #[test]
     fn private_key_export_reauth_derives_from_payload_and_clears_on_page_leave() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let root = phase40t_temp_root("private-key-export");
         std::env::remove_var("ALICE_WALLET_QA_MOCK");
         std::env::set_var("ALICE_WALLET_DATA_ROOT", &root);
@@ -1231,7 +1356,7 @@ mod tests {
 
     #[test]
     fn push_history_caps_memory_and_persists_local_history() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let root = phase40t_temp_root("history-persistence");
         std::env::remove_var("ALICE_WALLET_QA_MOCK");
         std::env::set_var("ALICE_WALLET_DATA_ROOT", &root);
@@ -1269,7 +1394,7 @@ mod tests {
 
     #[test]
     fn phase40t_materializes_owner_test_profiles_when_requested() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let Some(root) = std::env::var_os("ALICE_WALLET_PHASE40T_MATERIALIZE_ROOT")
             .map(std::path::PathBuf::from)
         else {
@@ -1333,7 +1458,7 @@ mod tests {
 
     #[test]
     fn qa_mock_mode_exposes_two_display_only_profiles() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("ALICE_WALLET_QA_MOCK", "1");
         let rt = Runtime::new().expect("runtime");
         let app = AliceWalletApp::new(rt);
@@ -1350,7 +1475,7 @@ mod tests {
 
     #[test]
     fn switching_active_profile_clears_in_memory_secrets() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("ALICE_WALLET_QA_MOCK", "1");
         let rt = Runtime::new().expect("runtime");
         let mut app = AliceWalletApp::new(rt);
@@ -1597,6 +1722,66 @@ fn spawn_worker(
     });
 }
 
+/// Dedicated blocking updater thread. Owns NO tokio/subxt state: it makes plain
+/// blocking HTTP calls (rustls `ureq`) and filesystem swaps, then wakes the GUI.
+fn spawn_update_worker(
+    rx: Receiver<UpdateRequest>,
+    tx: Sender<UpdateEvent>,
+    repaint: UpdateRepaint,
+) {
+    std::thread::spawn(move || {
+        let wake = |repaint: &UpdateRepaint| {
+            if let Ok(guard) = repaint.lock() {
+                if let Some(ctx) = guard.as_ref() {
+                    ctx.request_repaint();
+                }
+            }
+        };
+        while let Ok(req) = rx.recv() {
+            match req {
+                UpdateRequest::Check => {
+                    let result = crate::update::check_for_update(crate::update::current_version())
+                        .map(Box::new)
+                        .map_err(|e| e.to_string());
+                    let _ = tx.send(UpdateEvent::CheckResult(result));
+                    wake(&repaint);
+                }
+                UpdateRequest::Apply { artifact, version } => {
+                    let _ = tx.send(UpdateEvent::ApplyProgress(format!(
+                        "Downloading {} ({:.1} MB)…",
+                        version,
+                        artifact.size as f64 / (1024.0 * 1024.0)
+                    )));
+                    wake(&repaint);
+                    let outcome = (|| {
+                        let bytes = crate::update::download_and_verify(&artifact)?;
+                        let _ = tx.send(UpdateEvent::ApplyProgress(
+                            "Verifying signature + checksum, installing…".to_string(),
+                        ));
+                        wake(&repaint);
+                        let applied = crate::update::apply_update(&artifact, &bytes)?;
+                        // Arm the first-launch health gate keyed to the NEW version
+                        // BEFORE we ever relaunch into it, so a crash rolls back.
+                        crate::update::arm_pending_health_check(&applied.app_path, &version)?;
+                        Ok::<_, crate::update::UpdateError>(())
+                    })();
+                    match outcome {
+                        Ok(()) => {
+                            let _ = tx.send(UpdateEvent::Applied {
+                                version: version.clone(),
+                            });
+                        }
+                        Err(e) => {
+                            let _ = tx.send(UpdateEvent::ApplyFailed(e.to_string()));
+                        }
+                    }
+                    wake(&repaint);
+                }
+            }
+        }
+    });
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // eframe impl
 // ────────────────────────────────────────────────────────────────────────────
@@ -1614,6 +1799,10 @@ impl eframe::App for AliceWalletApp {
         while let Ok(result) = self.rx.try_recv() {
             self.handle_async_result(result);
         }
+
+        // Self-update: register waker, drain updater events, schedule checks,
+        // resolve the first-launch health gate.
+        self.tick_update(ctx);
 
         // Handle auto lock + pre-lock warning
         if self.phase == Phase::Main && self.secrets.is_some() {
@@ -1701,6 +1890,9 @@ impl eframe::App for AliceWalletApp {
             Phase::Backup => ui::backup::render(ui_root, self),
             Phase::Main => ui::shell::render(ui_root, self),
         }
+
+        // Self-update prompt / hard-block overlay (never silent-applies).
+        ui::update_prompt::render(ctx, self);
 
         if self.busy || self.auth_busy || self.refresh_pending > 0 {
             ctx.request_repaint();
@@ -1892,6 +2084,168 @@ impl AliceWalletApp {
             AsyncResult::NodeProcErr(err) => {
                 self.toast = Some(Toast::err(self.t("node.start_failed_title"), err));
             }
+        }
+    }
+
+    // ── Self-update driver ──────────────────────────────────────────────────
+
+    /// Per-frame self-update bookkeeping: register the repaint waker once, drain
+    /// updater events, fire the launch check + periodic re-checks, and resolve
+    /// the first-launch health gate. Cheap and side-effect-light when idle.
+    fn tick_update(&mut self, ctx: &egui::Context) {
+        // Updates are inert in QA/mock mode and when we can't resolve the app.
+        if self.qa_mock_mode {
+            return;
+        }
+
+        // Register the egui repaint waker with the updater thread once.
+        if !self.update_ctx_registered {
+            if let Some(slot) = self.update_repaint.as_ref() {
+                if let Ok(mut guard) = slot.lock() {
+                    *guard = Some(ctx.clone());
+                    self.update_ctx_registered = true;
+                }
+            }
+        }
+
+        // Surface a one-time toast if a prior new build was rolled back.
+        if let Some(failed) = self.update_ui.rolled_back_from.take() {
+            self.toast = Some(Toast::err(
+                "Update rolled back",
+                format!(
+                    "Version {failed} did not start cleanly. Restored the previous working version."
+                ),
+            ));
+        }
+
+        // Commit the freshly-installed build's health once it has run cleanly for
+        // the probation window (no crash on launch).
+        if self.update_ui.pending_health_confirm {
+            let due = self
+                .update_ui
+                .health_confirm_at
+                .map(|t| Instant::now() >= t)
+                .unwrap_or(true);
+            if due {
+                self.update_ui.pending_health_confirm = false;
+                self.update_ui.health_confirm_at = None;
+                if let Some(app) = self.app_path.as_ref() {
+                    if let Ok(true) = crate::update::confirm_health_and_commit(app) {
+                        self.update_ui.just_updated_to =
+                            Some(crate::update::current_version().to_string());
+                    }
+                }
+            } else {
+                ctx.request_repaint_after(Duration::from_secs(1));
+            }
+        }
+
+        if let Some(ver) = self.update_ui.just_updated_to.take() {
+            self.toast = Some(Toast::ok(
+                "Updated",
+                format!("Alice Wallet is now on version {ver}."),
+            ));
+        }
+
+        // Drain updater events.
+        while let Ok(ev) = self.update_rx.try_recv() {
+            self.handle_update_event(ev);
+        }
+
+        // Fire the launch check (once) and periodic background re-checks.
+        if !self.network_disabled && self.app_path.is_some() {
+            let due = match self.update_ui.next_check_at {
+                None => true,
+                Some(t) => Instant::now() >= t,
+            };
+            if due && !self.update_ui.applying {
+                self.update_ui.next_check_at = Some(Instant::now() + crate::update::CHECK_INTERVAL);
+                let _ = self.update_tx.send(UpdateRequest::Check);
+            }
+        }
+    }
+
+    fn handle_update_event(&mut self, ev: UpdateEvent) {
+        match ev {
+            UpdateEvent::CheckResult(Ok(outcome)) => {
+                let outcome = *outcome;
+                // A new check supersedes a previous dismissal only for a strictly
+                // newer offer; keep it simple: reset dismissal on every fresh
+                // available/unsupported result so users still get re-prompted at
+                // the next interval if they earlier dismissed.
+                if !matches!(outcome, crate::update::CheckOutcome::UpToDate { .. }) {
+                    self.update_ui.dismissed = false;
+                }
+                // A newer version with no artifact for THIS platform can't be
+                // applied in-app — surface it once as a toast pointing at the
+                // download page, and don't raise the blocking modal for it.
+                if let crate::update::CheckOutcome::UpdateAvailableNoArtifact {
+                    current,
+                    manifest,
+                } = &outcome
+                {
+                    self.toast = Some(Toast::ok(
+                        "Update available",
+                        format!(
+                            "Version {} is available (you're on {}). Download it from the Alice Wallet releases page.",
+                            manifest.version, current
+                        ),
+                    ));
+                }
+                self.update_ui.outcome = Some(outcome);
+                self.update_ui.error = None;
+            }
+            UpdateEvent::CheckResult(Err(e)) => {
+                // Check failures are non-fatal and silent (no nagging toasts);
+                // recorded for the Settings "check now" affordance.
+                self.update_ui.error = Some(e);
+            }
+            UpdateEvent::ApplyProgress(p) => {
+                self.update_ui.applying = true;
+                self.update_ui.progress = Some(p);
+            }
+            UpdateEvent::Applied { version } => {
+                self.update_ui.applying = false;
+                self.update_ui.progress = None;
+                self.update_ui.error = None;
+                self.update_ui.ready_to_relaunch = Some(version);
+            }
+            UpdateEvent::ApplyFailed(e) => {
+                self.update_ui.applying = false;
+                self.update_ui.progress = None;
+                self.update_ui.error = Some(e);
+            }
+        }
+    }
+
+    /// Begin applying the currently-offered update (user-initiated only).
+    pub fn start_update_apply(&mut self) {
+        let Some(outcome) = self.update_ui.outcome.as_ref() else {
+            return;
+        };
+        let (artifact, version) = match outcome {
+            crate::update::CheckOutcome::UpdateAvailable {
+                artifact, manifest, ..
+            } => (artifact.clone(), manifest.version.clone()),
+            _ => return,
+        };
+        self.update_ui.applying = true;
+        self.update_ui.error = None;
+        self.update_ui.progress = Some("Starting update…".to_string());
+        let _ = self
+            .update_tx
+            .send(UpdateRequest::Apply { artifact, version });
+    }
+
+    /// Relaunch into the freshly-installed build and exit this process.
+    pub fn relaunch_now(&mut self) {
+        if let Some(app) = self.app_path.clone() {
+            // Tear the node down first so it never outlives the swap.
+            if self.node_supervisor.is_active() {
+                self.node_supervisor.request_stop();
+            }
+            let _ = crate::update::relaunch(&app);
+            std::process::exit(0);
         }
     }
 }

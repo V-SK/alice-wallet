@@ -81,6 +81,10 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
 
     ui.add_space(14.0);
 
+    updates_card(ui, app);
+
+    ui.add_space(14.0);
+
     card(ui, |ui| {
         section_title(ui, app.t("set.autolock"));
         field_label(ui, app.t("set.autolock_label"));
@@ -158,6 +162,78 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
         ui.add_space(4.0);
         if danger_button(ui, app.t("set.lock_now"), true).clicked() {
             app.lock_now();
+        }
+    });
+}
+
+/// Software-updates card: current version, last-check status, and a manual
+/// "check now" trigger. Updates are signed-manifest-verified and never silent.
+fn updates_card(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
+    use crate::app::UpdateRequest;
+    use crate::update::CheckOutcome;
+
+    card(ui, |ui| {
+        section_title(ui, "Software updates");
+        ui.add_space(6.0);
+
+        // Current status line derived from the last check outcome / error.
+        let status: String = if app.update_ui.applying {
+            "Updating…".to_string()
+        } else if let Some(ver) = app.update_ui.ready_to_relaunch.clone() {
+            format!("Version {ver} installed — relaunch to apply")
+        } else {
+            match app.update_ui.outcome.as_ref() {
+                Some(CheckOutcome::UpToDate { current }) => {
+                    format!("Up to date (v{current})")
+                }
+                Some(CheckOutcome::UpdateAvailable { manifest, .. })
+                | Some(CheckOutcome::UpdateAvailableNoArtifact { manifest, .. }) => {
+                    format!("Version {} available", manifest.version)
+                }
+                Some(CheckOutcome::Unsupported { min_supported, .. }) => {
+                    format!("Update required (minimum v{min_supported})")
+                }
+                None => {
+                    if let Some(err) = app.update_ui.error.as_ref() {
+                        format!("Last check failed: {err}")
+                    } else if app.network_disabled {
+                        "Updates disabled (offline test mode)".to_string()
+                    } else {
+                        "Not checked yet".to_string()
+                    }
+                }
+            }
+        };
+
+        ui.label(
+            RichText::new(format!("This version: v{}", env!("CARGO_PKG_VERSION")))
+                .size(12.0)
+                .color(THEME.text_mid),
+        );
+        ui.add_space(4.0);
+        ui.label(RichText::new(status).size(12.0).color(THEME.text_dim));
+        ui.add_space(10.0);
+
+        let can_check = !app.qa_mock_mode && !app.network_disabled && !app.update_ui.applying;
+        if secondary_button(ui, "Check for updates", can_check, false).clicked() {
+            app.update_ui.error = None;
+            // Force the next scheduled check to fire immediately too.
+            app.update_ui.next_check_at = None;
+            let _ = app.update_tx.send(UpdateRequest::Check);
+        }
+
+        // If an update is known-available but was dismissed, let the user reopen
+        // the prompt without waiting for the next interval.
+        let dismissed_offer = app.update_ui.dismissed
+            && matches!(
+                app.update_ui.outcome.as_ref(),
+                Some(CheckOutcome::UpdateAvailable { .. })
+            );
+        if dismissed_offer {
+            ui.add_space(8.0);
+            if primary_button(ui, "Review available update", true, false).clicked() {
+                app.update_ui.dismissed = false;
+            }
         }
     });
 }

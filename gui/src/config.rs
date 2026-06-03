@@ -86,6 +86,13 @@ fn wallet_data_root_override() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
+/// Process-wide lock serializing every test that mutates the global
+/// `ALICE_WALLET_DATA_ROOT` (and the tests that read the derived data root).
+/// Tests in different modules share THIS one mutex so the parallel runner can
+/// never observe a half-set override from a sibling test in another module.
+#[cfg(test)]
+pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 impl Settings {
     pub fn load() -> Self {
         let path = config_path();

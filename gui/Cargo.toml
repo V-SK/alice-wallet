@@ -11,6 +11,12 @@ bip39 = "2.0.0"
 blake2 = "0.10.6"
 bs58 = "0.5.1"
 dirs = "5.0.1"
+# Self-update trust anchor: verify the ed25519-signed release manifest
+# (latest.json.sig) with our embedded public key. Raw ed25519 (no pre-hash),
+# matching the offline signer (`openssl pkeyutl -sign -rawin`). We only need
+# detached-signature verification, so default features (incl. key generation)
+# are off and just `std` is enabled for the `Verifier` ergonomics.
+ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
 eframe = { version = "0.34.1", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
 egui_extras = { version = "0.34.1", features = ["svg"] }
 hex = "0.4.3"
@@ -22,6 +28,10 @@ scale-value = "0.18.2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10.8"
+# Blocking HTTP client for the self-updater (manifest + artifact download).
+# rustls-only TLS (no system OpenSSL). The updater runs on the worker thread,
+# so a blocking client keeps it off the async/subxt stack entirely.
+ureq = { version = "2.10", default-features = false, features = ["tls", "gzip"] }
 subxt = { version = "0.50.0", default-features = false, features = ["jsonrpsee", "native"] }
 subxt-signer = { version = "0.50.0", default-features = false, features = ["native", "sr25519", "std", "subxt"] }
 substrate-bip39 = "0.6.1"

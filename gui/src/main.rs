@@ -8,6 +8,7 @@ mod miner;
 mod node;
 mod supervise;
 mod ui;
+mod update;
 mod wallet_profiles;
 
 use eframe::egui::IconData;
