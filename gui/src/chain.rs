@@ -14,7 +14,7 @@ pub const ALICE_MAINNET_CHAIN_NAME: &str = "Alice Mainnet";
 pub const ALICE_MAINNET_GENESIS_HASH: &str =
     "0x7746a1d14736a95e00a617a11094b6e86bbf91cd4e7e64c0e748e3c0d2ad54b0";
 pub const ALICE_RUNTIME_SPEC_NAME: &str = "solochain-template-runtime";
-pub const ALICE_APPROVED_RUNTIME_SPEC_VERSIONS: [u32; 1] = [108];
+pub const ALICE_APPROVED_RUNTIME_SPEC_VERSIONS: [u32; 1] = [110];
 
 pub type Client = OnlineClient<PolkadotConfig>;
 
