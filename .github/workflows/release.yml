@@ -96,6 +96,9 @@ jobs:
           # 2) Per-OS node binary: committed assets take precedence (e.g. macOS
           #    ships its node committed under gui/release-assets/<target>/), else
           #    fetch the matching per-OS binary from alice-chain's node release.
+          #    This glob ALSO stages the committed CPU miner (xmrig) when present
+          #    (macOS arm64 ships it); the Package steps copy it beside the wallet
+          #    per gui/src/node.rs::resolve_miner_binary. It is optional.
           if [ -d "gui/release-assets/${{ matrix.target }}" ]; then
             cp -v gui/release-assets/${{ matrix.target }}/* node-stage/ 2>/dev/null || true
           fi
@@ -185,6 +188,13 @@ jobs:
           if [ -f node-stage/alice-mainnet-raw.json ]; then
             cp node-stage/alice-mainnet-raw.json dist/AliceWallet/
           fi
+          # Bundled CPU miner (XMRig), optional — sibling layout per
+          # gui/src/node.rs::resolve_miner_binary. TODO(linux): supply a Linux
+          # xmrig under gui/release-assets/<target>/ (macOS arm64 ships it now).
+          if [ -f node-stage/xmrig ]; then
+            cp node-stage/xmrig dist/AliceWallet/
+            chmod +x dist/AliceWallet/xmrig
+          fi
           cat > dist/AliceWallet/AliceWallet.desktop <<EOF
           [Desktop Entry]
           Name=Alice Wallet
@@ -215,6 +225,12 @@ jobs:
           if (Test-Path node-stage/alice-mainnet-raw.json) {
             Copy-Item node-stage/alice-mainnet-raw.json dist/AliceWallet/
           }
+          # Bundled CPU miner (XMRig), optional — sibling layout per
+          # gui/src/node.rs::resolve_miner_binary. TODO(windows): supply a
+          # Windows xmrig.exe under gui/release-assets/<target>/.
+          if (Test-Path node-stage/xmrig.exe) {
+            Copy-Item node-stage/xmrig.exe dist/AliceWallet/
+          }
           Compress-Archive -Path dist/AliceWallet -DestinationPath ${{ matrix.artifact }}
 
       # ---------- macOS .app ----------
@@ -235,6 +251,13 @@ jobs:
           if [ -f node-stage/alice-mainnet-raw.json ]; then
             cp node-stage/alice-mainnet-raw.json "$APP/Contents/Resources/"
           fi
+          # Bundled CPU miner (XMRig) beside the wallet in MacOS/ (optional) —
+          # matches gui/src/node.rs::resolve_miner_binary. macOS arm64 ships it
+          # committed under gui/release-assets/<target>/xmrig.
+          if [ -f node-stage/xmrig ]; then
+            cp node-stage/xmrig "$APP/Contents/MacOS/"
+            chmod +x "$APP/Contents/MacOS/xmrig"
+          fi
           # Read version from Cargo.toml so the bundle never drifts from the crate.
           VER=$(grep -m1 '^version' gui/Cargo.toml | sed -E 's/version *= *"([^"]+)".*/\1/')
           cat > "$APP/Contents/Info.plist" <<EOF
@@ -254,9 +277,12 @@ jobs:
           </dict>
           </plist>
           EOF
-          # Sign nested node binary first (if present), then the bundle.
+          # Sign nested binaries first (node + miner, if present), then the bundle.
           if [ -f "$APP/Contents/MacOS/solochain-template-node" ]; then
             codesign --force -s - "$APP/Contents/MacOS/solochain-template-node" || true
+          fi
+          if [ -f "$APP/Contents/MacOS/xmrig" ]; then
+            codesign --force -s - "$APP/Contents/MacOS/xmrig" || true
           fi
           codesign --force --deep -s - "$APP" || true
           ditto -c -k --keepParent "$APP" ${{ matrix.artifact }}

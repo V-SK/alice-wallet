@@ -87,6 +87,27 @@ resolve_node_bin_for() {
   echo ""
 }
 
+# ── Bundled CPU miner (XMRig) — same optional, sibling-of-the-wallet layout as
+#    the node (gui/src/node.rs::resolve_miner_binary, XMRIG_BINARY_NAME="xmrig").
+#    macOS arm64 ships its xmrig COMMITTED under release-assets/<triple>/xmrig.
+#    TODO(windows/linux): supply per-OS xmrig (committed under the matching
+#    release-assets/<triple>/, or via ALICE_XMRIG_BIN[_<triple>]); macOS is what
+#    we test now. When absent the artifact still ships (the Mining page surfaces
+#    a "miner not bundled" error on Start) — we never block the build on it.
+resolve_xmrig_bin_for() {
+  local triple="$1" want_exe="$2"   # want_exe=1 => windows .exe
+  local committed_dir="${ROOT_DIR}/release-assets/${triple}"
+  local fname="xmrig"; [[ "${want_exe}" == "1" ]] && fname="xmrig.exe"
+  # 1) committed asset
+  if [[ -f "${committed_dir}/${fname}" ]]; then echo "${committed_dir}/${fname}"; return; fi
+  # 2) explicit per-triple env override (a local path)
+  local var="ALICE_XMRIG_BIN_$(echo "${triple}" | tr '-' '_')"
+  local val="${!var:-}"
+  [[ -z "${val}" ]] && val="${ALICE_XMRIG_BIN:-}"
+  if [[ -n "${val}" && -f "${val}" ]]; then echo "${val}"; return; fi
+  echo ""
+}
+
 # Verify + copy the bundled spec into a staging dir (fail-closed on SHA pin).
 stage_chain_spec() {
   local dest="$1"
@@ -196,6 +217,25 @@ for plat in ${TARGETS}; do
         echo "  ~ no node binary for ${triple} — wallet ships in Remote-node mode"
       fi
       [[ -n "$(stage_chain_spec "${app}/Contents/Resources")" ]] && echo "  + bundled chain spec (SHA-pinned)"
+      # Bundled CPU miner (XMRig) beside the wallet in MacOS/ (gui/src/node.rs
+      # resolve_miner_binary). Optional — committed for macOS arm64.
+      xb="$(resolve_xmrig_bin_for "${triple}" 0)"
+      if [[ -n "${xb}" ]]; then
+        cp "${xb}" "${app}/Contents/MacOS/xmrig"
+        chmod +x "${app}/Contents/MacOS/xmrig"
+        echo "  + bundled xmrig ($(sha256_of "${xb}" | cut -c1-12)…)"
+      else
+        echo "  ~ no xmrig for ${triple} — wallet ships without the bundled miner"
+      fi
+      # App icon → Resources + CFBundleIconFile, so Launchpad / Finder / Dock show
+      # the Alice mark instead of a generic icon (committed gui/assets/macos).
+      icns="${ROOT_DIR}/assets/macos/AliceWallet.icns"
+      if [[ -f "${icns}" ]]; then
+        cp "${icns}" "${app}/Contents/Resources/AliceWallet.icns"
+        echo "  + bundled app icon (AliceWallet.icns)"
+      else
+        echo "  ~ no app icon (${icns} missing) — a generic icon will show"
+      fi
       cat > "${app}/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -206,6 +246,7 @@ for plat in ${TARGETS}; do
   <key>CFBundleVersion</key><string>${VERSION}</string>
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
   <key>CFBundleExecutable</key><string>AliceWallet</string>
+  <key>CFBundleIconFile</key><string>AliceWallet</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
   <key>NSHighResolutionCapable</key><true/>
@@ -229,6 +270,15 @@ PLIST
         echo "  ~ no node binary for ${triple} — wallet ships in Remote-node mode"
       fi
       [[ -n "$(stage_chain_spec "${d}")" ]] && echo "  + bundled chain spec (SHA-pinned)"
+      # Bundled CPU miner (XMRig) as a sibling of the wallet exe. Optional.
+      # TODO(linux): supply release-assets/${triple}/xmrig (or ALICE_XMRIG_BIN).
+      xb="$(resolve_xmrig_bin_for "${triple}" 0)"
+      if [[ -n "${xb}" ]]; then
+        cp "${xb}" "${d}/xmrig"; chmod +x "${d}/xmrig"
+        echo "  + bundled xmrig ($(sha256_of "${xb}" | cut -c1-12)…)"
+      else
+        echo "  ~ no xmrig for ${triple} — wallet ships without the bundled miner"
+      fi
       ( cd "${stage}" && tar -czf "${OUT_DIR}/${artifact}" "AliceWallet" )
       ;;
     windows-x86_64)
@@ -243,6 +293,15 @@ PLIST
         echo "  ~ no node binary for ${triple} — wallet ships in Remote-node mode"
       fi
       [[ -n "$(stage_chain_spec "${d}")" ]] && echo "  + bundled chain spec (SHA-pinned)"
+      # Bundled CPU miner (XMRig) as a sibling of the wallet exe. Optional.
+      # TODO(windows): supply release-assets/${triple}/xmrig.exe (or ALICE_XMRIG_BIN).
+      xb="$(resolve_xmrig_bin_for "${triple}" 1)"
+      if [[ -n "${xb}" ]]; then
+        cp "${xb}" "${d}/xmrig.exe"
+        echo "  + bundled xmrig ($(sha256_of "${xb}" | cut -c1-12)…)"
+      else
+        echo "  ~ no xmrig for ${triple} — wallet ships without the bundled miner"
+      fi
       # zip via `ditto` on macOS host, else `zip`.
       if command -v ditto >/dev/null 2>&1; then
         ( cd "${stage}" && ditto -c -k --keepParent "AliceWallet" "${OUT_DIR}/${artifact}" )

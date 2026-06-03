@@ -19,6 +19,7 @@
 #![allow(dead_code)]
 
 pub mod child;
+pub mod miner_supervisor;
 pub mod node_supervisor;
 
 use std::collections::VecDeque;

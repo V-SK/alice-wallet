@@ -4,6 +4,7 @@ use crate::crypto::{self, WalletPayload, WalletSecrets};
 use crate::history::{self, TxRecord};
 use crate::i18n;
 use crate::node::{self, NodeMode};
+use crate::supervise::miner_supervisor::{MinerStats, MinerSupervisor};
 use crate::supervise::node_supervisor::NodeSupervisor;
 use crate::supervise::ProcStatus;
 use crate::ui;
@@ -111,6 +112,13 @@ pub enum AsyncAction {
     StopNode,
     /// Poll the embedded node's process status into the GUI.
     PollNodeProc,
+    /// Start the bundled CPU miner (XMRig) from a validated launch plan
+    /// (experimental, opt-in, credit-only — see `crate::miner`).
+    StartMiner(crate::miner::MinerLaunchPlan),
+    /// Request a graceful stop of the bundled miner.
+    StopMiner,
+    /// Poll the miner's live stats into the GUI.
+    PollMinerStats,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,6 +142,10 @@ pub enum AsyncResult {
     NodeProc(ProcStatus),
     /// A node start/stop request failed before it could be supervised.
     NodeProcErr(String),
+    /// Latest miner stats snapshot (hashrate + accepted/rejected shares).
+    MinerStats(MinerStats),
+    /// A miner start request failed before it could be supervised.
+    MinerErr(String),
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -275,6 +287,11 @@ pub struct AliceWalletApp {
     pub node_proc: ProcStatus,
     pub last_node_proc_poll: Option<Instant>,
 
+    // bundled CPU miner (XMRig) — experimental, opt-in, credit-only
+    pub miner_supervisor: MinerSupervisor,
+    pub miner_stats: MinerStats,
+    pub last_miner_stats_poll: Option<Instant>,
+
     // async
     pub tx: Sender<AsyncAction>,
     pub rx: Receiver<AsyncResult>,
@@ -318,7 +335,14 @@ impl AliceWalletApp {
 
         let rt = Arc::new(rt);
         let node_supervisor = NodeSupervisor::new();
-        spawn_worker(rt.clone(), worker_rx, worker_tx, node_supervisor.clone());
+        let miner_supervisor = MinerSupervisor::new();
+        spawn_worker(
+            rt.clone(),
+            worker_rx,
+            worker_tx,
+            node_supervisor.clone(),
+            miner_supervisor.clone(),
+        );
 
         // Dedicated updater thread + its repaint waker (filled on first frame).
         let (update_tx, update_worker_rx) = channel::<UpdateRequest>();
@@ -408,6 +432,9 @@ impl AliceWalletApp {
             node_supervisor,
             node_proc: ProcStatus::stopped(),
             last_node_proc_poll: None,
+            miner_supervisor,
+            miner_stats: MinerStats::default(),
+            last_miner_stats_poll: None,
             tx: gui_tx,
             rx: gui_rx,
             update_tx,
@@ -845,6 +872,12 @@ impl AliceWalletApp {
     }
 
     pub fn lock_now(&mut self) {
+        // Stop the bundled miner when the wallet locks — it must never keep
+        // mining (and holding the reward identity on-wire) past a lock.
+        if self.miner_supervisor.is_active() {
+            self.miner_supervisor.request_stop();
+            self.miner_stats = MinerStats::default();
+        }
         self.secrets = None;
         self.balance = None;
         self.clear_password_inputs();
@@ -951,6 +984,51 @@ impl AliceWalletApp {
     pub fn stop_embedded_node(&mut self) {
         let _ = self.tx.send(AsyncAction::StopNode);
         self.node_proc.state = crate::supervise::ProcState::Stopping;
+    }
+
+    // ── Bundled CPU miner (XMRig) — experimental, opt-in, credit-only ───────
+
+    /// Start the bundled miner against Alice's relay using the active account's
+    /// Alice address as the reward identity. Opt-in only (user clicks Start).
+    /// Resolves + validates the launch plan; surfaces a toast on failure. The
+    /// wallet seed/private key is NEVER passed to the miner.
+    pub fn start_miner(&mut self) {
+        if self.qa_mock_mode || self.network_disabled {
+            self.toast = Some(Toast::err(
+                self.t("mining.start_failed_title"),
+                self.t("node.unavailable_isolated"),
+            ));
+            return;
+        }
+        let Some(reward_identity) = self.selected_reward_identity() else {
+            self.toast = Some(Toast::err(
+                self.t("mining.start_failed_title"),
+                self.t("mining.identity_error"),
+            ));
+            return;
+        };
+        let program = match crate::node::resolve_miner_binary() {
+            Ok(p) => p,
+            Err(e) => {
+                self.toast = Some(Toast::err(self.t("mining.start_failed_title"), e));
+                return;
+            }
+        };
+        match crate::miner::build_miner_launch_plan(program, &reward_identity) {
+            Ok(plan) => {
+                let _ = self.tx.send(AsyncAction::StartMiner(plan));
+                self.miner_stats.state = crate::supervise::ProcState::Starting;
+                self.miner_stats.running = true;
+            }
+            Err(e) => {
+                self.toast = Some(Toast::err(self.t("mining.start_failed_title"), e));
+            }
+        }
+    }
+
+    pub fn stop_miner(&mut self) {
+        let _ = self.tx.send(AsyncAction::StopMiner);
+        self.miner_stats.state = crate::supervise::ProcState::Stopping;
     }
 
     /// The RPC URL to use for chain queries, honoring node mode.
@@ -1504,6 +1582,7 @@ fn spawn_worker(
     rx: Receiver<AsyncAction>,
     tx: Sender<AsyncResult>,
     node_supervisor: NodeSupervisor,
+    miner_supervisor: MinerSupervisor,
 ) {
     std::thread::spawn(move || {
         while let Ok(action) = rx.recv() {
@@ -1530,6 +1609,29 @@ fn spawn_worker(
                 }
                 AsyncAction::PollNodeProc => {
                     let _ = tx.send(AsyncResult::NodeProc(node_supervisor.status()));
+                }
+                AsyncAction::StartMiner(plan) => {
+                    // Spawn must run on the tokio runtime (it spawns child I/O
+                    // tasks). Enter the runtime context, then report stats.
+                    let sup = miner_supervisor.clone();
+                    let tx = tx.clone();
+                    let _guard = rt.enter();
+                    match sup.start(plan) {
+                        Ok(()) => {
+                            let _ = tx.send(AsyncResult::MinerStats(sup.stats()));
+                        }
+                        Err(e) => {
+                            let _ = tx.send(AsyncResult::MinerErr(e));
+                            let _ = tx.send(AsyncResult::MinerStats(sup.stats()));
+                        }
+                    }
+                }
+                AsyncAction::StopMiner => {
+                    miner_supervisor.request_stop();
+                    let _ = tx.send(AsyncResult::MinerStats(miner_supervisor.stats()));
+                }
+                AsyncAction::PollMinerStats => {
+                    let _ = tx.send(AsyncResult::MinerStats(miner_supervisor.stats()));
                 }
                 AsyncAction::Unlock(payload, mut password) => {
                     let tx = tx.clone();
@@ -1877,6 +1979,20 @@ impl eframe::App for AliceWalletApp {
             }
         }
 
+        // Poll the bundled miner's stats while it's active (drives the live
+        // hashrate / shares readout on the Mining page).
+        if self.phase == Phase::Main && (self.miner_stats.running || self.miner_supervisor.is_active())
+        {
+            let needs = self
+                .last_miner_stats_poll
+                .map(|t| t.elapsed() > Duration::from_secs(1))
+                .unwrap_or(true);
+            if needs {
+                self.last_miner_stats_poll = Some(Instant::now());
+                let _ = self.tx.send(AsyncAction::PollMinerStats);
+            }
+        }
+
         // Detect interaction to reset auto-lock timer
         if ctx.input(|i| i.pointer.any_pressed() || !i.events.is_empty()) {
             self.bump_interaction();
@@ -1908,13 +2024,20 @@ impl eframe::App for AliceWalletApp {
     /// `kill_on_drop` on the child is the backstop. A node crash/teardown never
     /// touches wallet custody state.
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // Stop the bundled miner first so it never outlives the wallet.
+        if self.miner_supervisor.is_active() {
+            self.miner_supervisor.request_stop();
+        }
         if self.node_supervisor.is_active() {
             self.node_supervisor.request_stop();
-            // Brief, bounded wait for graceful SIGTERM teardown.
-            let deadline = Instant::now() + Duration::from_secs(6);
-            while Instant::now() < deadline && self.node_supervisor.is_active() {
-                std::thread::sleep(Duration::from_millis(100));
-            }
+        }
+        // Brief, bounded wait for graceful SIGTERM teardown of both children;
+        // `kill_on_drop` on each owned child is the backstop.
+        let deadline = Instant::now() + Duration::from_secs(6);
+        while Instant::now() < deadline
+            && (self.node_supervisor.is_active() || self.miner_supervisor.is_active())
+        {
+            std::thread::sleep(Duration::from_millis(100));
         }
     }
 }
@@ -2085,6 +2208,12 @@ impl AliceWalletApp {
             AsyncResult::NodeProcErr(err) => {
                 self.toast = Some(Toast::err(self.t("node.start_failed_title"), err));
             }
+            AsyncResult::MinerStats(stats) => {
+                self.miner_stats = stats;
+            }
+            AsyncResult::MinerErr(err) => {
+                self.toast = Some(Toast::err(self.t("mining.start_failed_title"), err));
+            }
         }
     }
 
@@ -2241,7 +2370,10 @@ impl AliceWalletApp {
     /// Relaunch into the freshly-installed build and exit this process.
     pub fn relaunch_now(&mut self) {
         if let Some(app) = self.app_path.clone() {
-            // Tear the node down first so it never outlives the swap.
+            // Tear the miner + node down first so neither outlives the swap.
+            if self.miner_supervisor.is_active() {
+                self.miner_supervisor.request_stop();
+            }
             if self.node_supervisor.is_active() {
                 self.node_supervisor.request_stop();
             }

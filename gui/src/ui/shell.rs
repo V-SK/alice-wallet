@@ -42,12 +42,26 @@ pub fn render(ui_root: &mut egui::Ui, app: &mut AliceWalletApp) {
     });
 
     // Topbar
+    // macOS draws our header UNDER the title bar (fullsize-content view), so the
+    // traffic lights float top-left — give them their own top strip + a taller
+    // bar so the content row sits clearly BELOW them (no crowding). Other OSes
+    // keep the native title bar above, so a normal centered bar is fine.
+    // macOS: tall enough that the content row (32px buttons / pill) sits BELOW
+    // the traffic lights AND the content area (h − top − bottom = 38px) fully
+    // fits them — a shorter area clipped the buttons/pill at the top.
+    #[cfg(target_os = "macos")]
+    let (topbar_h, topbar_margin) = (
+        88.0_f32,
+        egui::Margin { left: 22, right: 22, top: 26, bottom: 14 },
+    );
+    #[cfg(not(target_os = "macos"))]
+    let (topbar_h, topbar_margin) = (60.0_f32, egui::Margin::symmetric(22, 12));
     egui::Panel::top("topbar")
-        .exact_size(52.0)
+        .exact_size(topbar_h)
         .frame(
             egui::Frame::NONE
                 .fill(THEME.bg_panel)
-                .inner_margin(egui::Margin::symmetric(22, 10))
+                .inner_margin(topbar_margin)
                 .stroke(Stroke::new(1.0, THEME.border)),
         )
         .show_inside(ui_root, |ui| {
@@ -159,7 +173,7 @@ pub fn render(ui_root: &mut egui::Ui, app: &mut AliceWalletApp) {
             // Logo header — bare orange triangle, no box.
             ui.horizontal(|ui| {
                 ui.add(
-                    egui::Image::new(egui::include_image!("../../assets/brand/alice-logo.svg"))
+                    egui::Image::new(egui::include_image!("../../assets/brand/alice-logo.png"))
                         .fit_to_exact_size(egui::vec2(34.0, 34.0)),
                 );
                 ui.add_space(12.0);

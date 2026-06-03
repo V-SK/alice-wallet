@@ -41,6 +41,70 @@ pub const NODE_BINARY_NAME: &str = "solochain-template-node";
 /// Filename of the bundled raw chain spec the node is launched with (`--chain`).
 pub const CHAIN_SPEC_FILENAME: &str = "alice-mainnet-raw.json";
 
+/// Filename of the bundled CPU miner binary (XMRig), per platform. The wallet
+/// resolves this as a sibling of its own executable (see
+/// [`resolve_miner_binary`]), mirroring the node-binary resolution.
+#[cfg(target_os = "windows")]
+pub const XMRIG_BINARY_NAME: &str = "xmrig.exe";
+#[cfg(not(target_os = "windows"))]
+pub const XMRIG_BINARY_NAME: &str = "xmrig";
+
+/// Resolve the path to the bundled CPU miner binary (XMRig) as a sibling of the
+/// wallet's own executable, mirroring [`resolve_node_binary`] / the per-OS
+/// packaging layout:
+/// - linux:  `AliceWallet/xmrig`
+/// - macOS:  `AliceWallet.app/Contents/MacOS/xmrig`
+/// - windows: `AliceWallet\xmrig.exe`
+///
+/// `ALICE_WALLET_MINER_BIN` overrides the resolved path (tests / advanced).
+///
+/// Dev fallback (debug/`cargo run`): when the sibling binary is absent we also
+/// look for the committed macOS arm64 asset at
+/// `gui/release-assets/aarch64-apple-darwin/xmrig` (relative to `CARGO_MANIFEST_DIR`),
+/// so mining works in a `cargo run`/`cargo test` checkout without packaging.
+/// Returns `Ok(path)` only when the file exists.
+pub fn resolve_miner_binary() -> Result<PathBuf, String> {
+    if let Some(over) = std::env::var_os("ALICE_WALLET_MINER_BIN") {
+        let p = PathBuf::from(over);
+        return if p.is_file() {
+            Ok(p)
+        } else {
+            Err(format!(
+                "ALICE_WALLET_MINER_BIN does not point to a file: {}",
+                p.display()
+            ))
+        };
+    }
+    let exe =
+        std::env::current_exe().map_err(|e| format!("cannot locate wallet executable: {e}"))?;
+    let dir = exe
+        .parent()
+        .ok_or_else(|| "wallet executable has no parent directory".to_string())?;
+    let candidate = dir.join(XMRIG_BINARY_NAME);
+    if candidate.is_file() {
+        return Ok(candidate);
+    }
+
+    // Dev fallback: the committed macOS arm64 asset in the source tree, so the
+    // Mining page works under `cargo run`/`cargo test` (debug) before packaging.
+    #[cfg(debug_assertions)]
+    {
+        let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("release-assets")
+            .join("aarch64-apple-darwin")
+            .join("xmrig");
+        if dev.is_file() {
+            return Ok(dev);
+        }
+    }
+
+    Err(format!(
+        "miner binary not bundled (expected at {}). Build/place `{}` beside the wallet.",
+        candidate.display(),
+        XMRIG_BINARY_NAME
+    ))
+}
+
 /// Which node the wallet talks to.
 ///
 /// Promotes `chain::NodeSyncMode` to a first-class, user-selectable profile
@@ -50,14 +114,15 @@ pub const CHAIN_SPEC_FILENAME: &str = "alice-mainnet-raw.json";
 #[serde(rename_all = "snake_case")]
 pub enum NodeMode {
     /// Wallet launches + manages a bundled local node; RPC over loopback `ws://`.
-    LocalEmbedded,
-    /// Wallet connects to an operator-provided remote node over `wss://`.
     ///
-    /// Default: a fresh install is usable immediately while the (large,
-    /// slow-to-sync) local node is optional. The headline embedded node is
-    /// opt-in via the Node page. (Plan §2: "offer Remote node as fast-start
-    /// while local syncs".)
+    /// Default (V 2026-06-03): the core wallet runs its OWN full node
+    /// (Monero-GUI / Bitcoin-Core style). On first run it starts + syncs the
+    /// bundled node locally; if the node binary is missing or the user wants an
+    /// instant start, they switch to Remote on the Node page.
     #[default]
+    LocalEmbedded,
+    /// Wallet connects to an operator-provided remote node over `wss://`
+    /// (fast-start / opt-in via the Node page while the local node syncs).
     Remote,
     /// No node; wallet is fail-closed (no balance trust, no send).
     Offline,

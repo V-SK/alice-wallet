@@ -2,6 +2,7 @@ use super::theme::THEME;
 use super::widgets::*;
 use crate::app::AliceWalletApp;
 use crate::miner::{self, RewardEvidenceStatus, WalletMiningStatus};
+use crate::supervise::miner_supervisor::MinerStats;
 use eframe::egui::{self, RichText, Stroke};
 
 pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
@@ -24,7 +25,14 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
     };
 
     section_title(ui, app.t("mining.title"));
-    heading(ui, app.t("mining.heading"));
+    ui.horizontal(|ui| {
+        heading(ui, app.t("mining.heading"));
+        ui.add_space(10.0);
+        // Prominent experimental ("测试中") badge next to the heading.
+        if miner::MINING_EXPERIMENTAL {
+            status_pill(ui, Tone::Warn, app.t("mining.experimental"));
+        }
+    });
     ui.add_space(4.0);
     subtle(ui, app.t("mining.subtitle"));
     ui.add_space(16.0);
@@ -79,6 +87,12 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
 
     ui.add_space(14.0);
 
+    // Live miner snapshot, polled each frame from the supervisor.
+    let stats = app.miner_stats.clone();
+    let address_ready = app.selected_reward_identity().is_some();
+
+    let mut want_start = false;
+    let mut want_stop = false;
     card(ui, |ui| {
         section_title(ui, app.t("mining.controls_title"));
         ui.label(
@@ -87,16 +101,116 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
                 .color(THEME.text_mid),
         );
         ui.add_space(12.0);
+        // Start is enabled only when execution is allowed, an Alice address is
+        // ready, and the miner is not already active. Stop is enabled while
+        // active. Disabled in isolated/mock modes.
+        let isolated = app.qa_mock_mode || app.network_disabled;
+        let can_run = miner::MINING_EXECUTION_ALLOWED && address_ready && !isolated;
+        let start_enabled = can_run && !stats.running;
+        let stop_enabled = stats.running;
         ui.horizontal(|ui| {
-            let _ = secondary_button(ui, app.t("mining.start_unavailable"), false, false);
-            let _ = secondary_button(ui, app.t("mining.stop_unavailable"), false, false);
+            if primary_button(ui, app.t("mining.start"), start_enabled, false).clicked() {
+                want_start = true;
+            }
+            ui.add_space(8.0);
+            if secondary_button(ui, app.t("mining.stop"), stop_enabled, false).clicked() {
+                want_stop = true;
+            }
         });
+        if !address_ready {
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new(app.t("mining.identity_error"))
+                    .size(12.0)
+                    .color(THEME.warn),
+            );
+        }
     });
+    if want_start {
+        app.start_miner();
+    }
+    if want_stop {
+        app.stop_miner();
+    }
+
+    ui.add_space(14.0);
+    miner_engine_panel(ui, app, &stats);
 
     ui.add_space(14.0);
     rewards_panel(ui, app, &packet.rewards);
     ui.add_space(14.0);
     daily_history(ui, app);
+}
+
+/// Live miner readout: status pill + hashrate + accepted/rejected shares.
+/// Reads the polled [`MinerStats`] snapshot; shows "— " when there is no figure.
+fn miner_engine_panel(ui: &mut egui::Ui, app: &AliceWalletApp, stats: &MinerStats) {
+    use crate::ui::widgets::proc_tone;
+
+    // Keep the live readout ticking while the miner is active.
+    if stats.running {
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(500));
+    }
+
+    card(ui, |ui| {
+        section_title(ui, app.t("mining.engine_title"));
+        ui.add_space(4.0);
+
+        // Status pill.
+        egui::Frame::NONE
+            .fill(THEME.bg_panel_hi)
+            .corner_radius(10)
+            .inner_margin(egui::Margin::symmetric(12, 9))
+            .stroke(Stroke::new(1.0, THEME.border))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(app.t("mining.engine_state").to_uppercase())
+                            .size(10.0)
+                            .strong()
+                            .color(THEME.text_dim),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        status_pill(ui, proc_tone(stats.state), engine_state_label(stats.state, app));
+                    });
+                });
+            });
+        ui.add_space(8.0);
+
+        // Hashrate (H/s) — "— " until the first reading arrives.
+        let hashrate = match stats.hashrate_hs {
+            Some(hs) => format_hashrate(hs),
+            None => "—".to_string(),
+        };
+        rewards_row(ui, app.t("mining.hashrate"), &hashrate);
+        ui.add_space(8.0);
+        rewards_row(ui, app.t("mining.accepted_shares"), &stats.accepted.to_string());
+        ui.add_space(8.0);
+        rewards_row(ui, app.t("mining.rejected_shares"), &stats.rejected.to_string());
+    });
+}
+
+/// Human-readable hashrate, e.g. `1234.5 H/s` or `12.3 kH/s`.
+fn format_hashrate(hs: f64) -> String {
+    if hs >= 1_000_000.0 {
+        format!("{:.2} MH/s", hs / 1_000_000.0)
+    } else if hs >= 1_000.0 {
+        format!("{:.2} kH/s", hs / 1_000.0)
+    } else {
+        format!("{:.1} H/s", hs)
+    }
+}
+
+fn engine_state_label(state: crate::supervise::ProcState, app: &AliceWalletApp) -> &'static str {
+    use crate::supervise::ProcState as P;
+    match state {
+        P::Running => app.t("mining.running"),
+        P::Starting => app.t("mining.starting"),
+        P::Stopping => app.t("mining.stopping"),
+        P::Error => app.t("mining.engine_error"),
+        P::Stopped => app.t("mining.stopped"),
+    }
 }
 
 fn rewards_panel(ui: &mut egui::Ui, app: &AliceWalletApp, rewards: &miner::WalletRewardProjection) {

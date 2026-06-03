@@ -52,7 +52,15 @@ fn main() -> eframe::Result {
     let mut viewport = eframe::egui::ViewportBuilder::default()
         .with_inner_size([1280.0, 820.0])
         .with_min_inner_size([1040.0, 680.0])
-        .with_title("Alice Wallet");
+        .with_title("Alice Wallet")
+        // Draw our own dark header flush to the window top instead of a
+        // system-colored title bar clashing with the dark theme. The title bar
+        // stays present (so the window is still OS-draggable + the traffic
+        // lights work), just transparent with the title text hidden. macOS-only
+        // effect; no-op elsewhere.
+        .with_fullsize_content_view(true)
+        .with_title_shown(false)
+        .with_titlebar_buttons_shown(true);
 
     if let Some(icon) = load_icon() {
         viewport = viewport.with_icon(icon);

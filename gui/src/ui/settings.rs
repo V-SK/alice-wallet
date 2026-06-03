@@ -243,7 +243,7 @@ fn about_card(ui: &mut egui::Ui, app: &AliceWalletApp) {
     card_accent(ui, |ui| {
         ui.horizontal(|ui| {
             ui.add(
-                egui::Image::new(egui::include_image!("../../assets/brand/alice-logo.svg"))
+                egui::Image::new(egui::include_image!("../../assets/brand/alice-logo.png"))
                     .fit_to_exact_size(egui::vec2(44.0, 44.0)),
             );
             ui.add_space(14.0);
