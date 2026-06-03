@@ -1,119 +1,75 @@
 # Alice Wallet
 
-Native desktop and command-line wallet for Alice Protocol.
+Native desktop wallet for the **Alice Protocol** — macOS, Windows, and Linux.
 
-This feature branch is hardened for Phase40 internal review. It supports local
-encrypted wallet creation/import, backup verification, unlock, balance refresh,
-receive QR, safe transfer review, transaction history, account/address views,
-sanitized node sync status, wallet XMR mining status/reward display, settings,
-auto-lock, and English / Chinese UI.
+Alice Wallet is a self-custody wallet for the Alice on-chain token (SS58 prefix
+300). It can **embed and manage a full Alice node** (Monero-GUI / Bitcoin-Core
+style — bundle, launch, and show honest sync state), keeps your keys encrypted
+on your own machine, and ships **signed auto-updates** so you stay current
+without re-downloading. The UI is bilingual (English / 中文).
 
-Live transfers, old reward-role actions, staking, governance, DeFi, approval
-grants, authorization grants, payout authority, settlement authority, mint
-authority, wallet publication, notarization, and release upload are not enabled
-in this branch.
+## Features
 
-The product direction follows the Monero GUI wallet information architecture for
-wallet/node separation and honest sync state, while keeping Alice-specific UI
-language and avoiding direct code or UI copying. See
-[`docs/ALICE_WALLET_XMR_STYLE_UPGRADE_PLAN.md`](docs/ALICE_WALLET_XMR_STYLE_UPGRADE_PLAN.md)
-and [`docs/XMR_GUI_REFERENCE_AUDIT.md`](docs/XMR_GUI_REFERENCE_AUDIT.md).
+- **Create or import a wallet** — generate a new wallet (with a recovery phrase),
+  or import an existing **12/24-word BIP39 mnemonic** or a **raw private key**.
+- **Encrypted at rest** — Argon2id (t=3) key derivation + AES-256-GCM; the seed
+  is zeroized in memory after use. Your keystore lives in your OS data directory
+  (`~/Library/Application Support/AliceWallet`, `%APPDATA%`, `~/.local/share`),
+  **not** inside the app bundle — so updates never touch your keys.
+- **Embedded full node** — start/stop a managed Alice node, with a productized,
+  fail-closed sync view (height / target / peers / freshness); or connect to a
+  remote RPC.
+- **Balances, receive (QR), send review, and transaction history.**
+- **Light XMR mining status** view (uses your wallet address as the reward
+  identity; execution stays off until you opt in).
+- **Signed auto-updates** — the wallet checks for new releases, verifies an
+  **ed25519 signature** over the release manifest with an embedded public key,
+  verifies each artifact's SHA-256, then applies the update and keeps the
+  previous version as a last-known-good rollback. You are always prompted before
+  an update is applied.
+- **Auto-lock**, copy-to-clipboard with auto-clear, and re-auth-gated private-key
+  export.
+
+## Status
+
+The Alice chain launches with the protocol's reward phase. Until then, on-chain
+actions (live transfers, confirmed balances) are inert by design — the wallet is
+fully usable for **key management, address generation, and node management**, and
+will activate on-chain features automatically once the network is live.
 
 ## Install
 
+Download the build for your OS from the
+[**Releases**](https://github.com/V-SK/alice-wallet/releases) page, then verify
+integrity and follow the per-OS run steps in
+[`docs/INSTALL.md`](docs/INSTALL.md):
+
+- **Verify** the download against the published `SHA256SUMS` (+ ed25519
+  signature) before running — never run a wallet binary that fails verification.
+- **Run** — the builds are ad-hoc signed (so they run on Apple Silicon) but are
+  **not** Apple/Windows certificate-signed; `docs/INSTALL.md` has the one-time
+  "open anyway" steps for each OS (terminal install avoids macOS quarantine).
+
+## Build from source
+
 ```bash
 git clone https://github.com/V-SK/alice-wallet.git
-cd alice-wallet
-# Requirements: Python 3.8+
-pip install -r requirements.txt
-```
-
-## Desktop GUI
-
-```bash
-cd gui
+cd alice-wallet/gui
 cargo run
 ```
 
-Release packaging is intentionally outside this Phase40 branch scope.
+Requires a stable Rust toolchain. `cargo test` runs the wallet test suite.
 
-For local QA smoke only, the GUI supports a display-only mock mode that avoids
-loading local wallet files, saved settings, RPC refreshes, transfer execution,
-and mining execution:
+## Releasing (maintainers)
 
-```bash
-cd gui
-TMPDIR=/tmp CARGO_TARGET_DIR="/Volumes/Z Slim/AliceWork/cargo-target" cargo build
-./scripts/build_macos_icon.sh
-./scripts/build_qa_app_bundle.sh "/Volumes/Z Slim/AliceWork/phase40r/AliceWalletQA.app"
-ALICE_WALLET_QA_MOCK=1 "/Volumes/Z Slim/AliceWork/phase40r/AliceWalletQA.app/Contents/MacOS/AliceWalletQA"
-```
+Releases are built per-OS, ad-hoc signed, checksummed, and the manifest +
+`SHA256SUMS` are signed **offline** with the project's ed25519 release key (never
+in CI). See [`gui/scripts/release.sh`](gui/scripts/release.sh) and
+[`docs/UPDATE-SCHEME.md`](docs/UPDATE-SCHEME.md) for the signing scheme and the
+auto-update manifest format.
 
-The QA bundle includes `assets/macos/AliceWallet.icns` for the macOS app icon.
-It is not a signed, notarized, or release-ready package.
+## Security
 
-## Phase40U Release Ops Readiness
-
-Phase40U adds descriptor-only release-ops packets for owner review. The helper
-builds an unsigned, unpublished release manifest candidate plus HF distribution,
-Storage Box archive, website download metadata, and leak-audit handoff files.
-It does not sign, notarize, upload, execute an updater, mutate HF or
-`/mnt/storage`, edit the website repo, or enable public distribution.
-
-```bash
-python3 release_ops.py \
-  --out-dir "/Volumes/Z Slim/AliceWork/phase40u" \
-  --source-commit "$(git rev-parse HEAD)" \
-  --app-version "0.1.0"
-```
-
-## L6 Public Release Signing Readiness
-
-L6 adds metadata-only validators for public Mac/Windows release signing
-readiness. It records Developer ID, hardened runtime, notarization, stapling,
-Gatekeeper, Authenticode, timestamp, SmartScreen, and HF-only signed-manifest
-requirements without using real credentials or executing release actions.
-The manifest validator also requires per-package redacted signing evidence
-before any release-ready claim can pass.
-
-No public release is allowed until packages are signed, notarized where
-applicable, hashes are frozen, and HF metadata is approved. See
-[`docs/L6_PUBLIC_CLIENT_RELEASE_SIGNING_READINESS.md`](docs/L6_PUBLIC_CLIENT_RELEASE_SIGNING_READINESS.md).
-
-## Quick Start
-
-```bash
-# Create wallet
-python cli.py create
-
-# Check balance
-python cli.py balance YOUR_ADDRESS
-```
-
-## Commands
-
-| Command | Description |
-|---------|-------------|
-| `create` | Create a local wallet |
-| `balance <address>` | Check ALICE balance |
-
-The CLI does not expose live transfer, old reward-role, staking, payout,
-settlement, or mint commands.
-
-The desktop Send view is a local review surface only. It checks address and
-amount formatting and does not send funds from this branch.
-
-## Wallet Mining
-
-The desktop Mining view is scoped to Alice-approved XMR contribution status
-only. It uses the selected wallet account/address as the Alice reward identity,
-does not expose pool configuration, and does not start a miner from this branch.
-Estimated rewards are display-only and daily confirmed rewards require
-accepted-share evidence.
-
-## Node Sync
-
-The desktop wallet shows a productized sync state with current height, target
-height, remaining blocks, progress, connection mode, peer/network status,
-freshness, and fail-closed status. Missing height, missing target height, stale
-data, and offline nodes do not display as ready or synced.
+Self-custody: you hold the keys. Back up your recovery phrase — it is the only
+way to restore your wallet. The wallet never transmits your seed or private key;
+private-key export is re-authentication-gated and cleared on screen exit.
