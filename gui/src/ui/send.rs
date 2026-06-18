@@ -139,22 +139,30 @@ fn review_card(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
         );
 
         ui.add_space(14.0);
-        egui::Frame::NONE
-            .fill(THEME.warning_bg)
-            .corner_radius(10)
-            .inner_margin(egui::Margin::symmetric(12, 10))
-            .stroke(Stroke::new(1.0, THEME.border_accent))
-            .show(ui, |ui| {
-                ui.label(
-                    RichText::new(app.t("send.unavailable_notice"))
-                        .size(12.5)
-                        .color(THEME.text_hi),
-                );
-            });
+        let ready = app.can_submit_transfer();
+        let busy = app.send_in_flight;
+        // Explain why send is blocked, so the disabled button isn't a dead end.
+        if !ready && !busy {
+            let reason = if !app.node_sync.allows_balance_refresh() {
+                app.t("send.blocked_not_synced")
+            } else {
+                app.t("send.blocked_locked")
+            };
+            egui::Frame::NONE
+                .fill(THEME.warning_bg)
+                .corner_radius(10)
+                .inner_margin(egui::Margin::symmetric(12, 10))
+                .stroke(Stroke::new(1.0, THEME.border_accent))
+                .show(ui, |ui| {
+                    ui.label(RichText::new(reason).size(12.5).color(THEME.text_hi));
+                });
+            ui.add_space(12.0);
+        }
 
-        ui.add_space(12.0);
         ui.horizontal(|ui| {
-            let _ = secondary_button(ui, app.t("send.unavailable_button"), false, false);
+            if primary_button(ui, app.t("send.confirm_send"), ready, busy).clicked() {
+                app.submit_send();
+            }
             if ghost_button(ui, app.t("send.cancel")).clicked() {
                 app.reset_send_review();
             }

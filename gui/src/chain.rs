@@ -6,7 +6,7 @@ use subxt::{OnlineClient, PolkadotConfig};
 
 pub const TOKEN_DECIMALS: u32 = 12;
 pub const NODE_SYNC_FRESHNESS_TTL_SECONDS: u64 = 90;
-pub const PRODUCTION_TRANSFER_ALLOWED: bool = false;
+pub const PRODUCTION_TRANSFER_ALLOWED: bool = true;
 pub const PAYOUT_ALLOWED: bool = false;
 pub const SETTLEMENT_ALLOWED: bool = false;
 pub const MINT_ALLOWED: bool = false;
@@ -611,9 +611,90 @@ pub async fn get_balance(client: &Client, address: &str) -> Result<u128, String>
     Ok(0)
 }
 
+/// Build, sign, and submit a `Balances.transfer_keep_alive` extrinsic and wait for
+/// FINALIZED success; returns the extrinsic hash (`0x…`).
+///
+/// Uses the dynamic API (mirrors `get_balance`) so it stays metadata-driven and never pins
+/// a call index — the exact call is resolved against the live spec-111 metadata at submit
+/// time. `transfer_keep_alive` (NOT `transfer_allow_death`) so a send can never reap the
+/// sender below the existential deposit. The `signer` is derived from the UNLOCKED wallet
+/// seed (`crypto::WalletSecrets::to_keypair`); a display-only / locked wallet has no seed
+/// and cannot reach here. `amount_planck` is the integer base-unit amount (the UI parses
+/// the human amount via `parse_token_amount`).
+pub async fn submit_transfer(
+    client: &Client,
+    signer: &subxt_signer::sr25519::Keypair,
+    dest_address: &str,
+    amount_planck: u128,
+) -> Result<String, String> {
+    let dest = subxt::utils::AccountId32::from_str(dest_address.trim())
+        .map_err(|_| "Invalid recipient address".to_string())?;
+    if amount_planck == 0 {
+        return Err("Amount must be greater than zero".to_string());
+    }
+    // dest: MultiAddress::Id(AccountId32); value: Compact<u128> (encoded per live metadata).
+    let call = subxt::dynamic::tx(
+        "Balances",
+        "transfer_keep_alive",
+        vec![
+            Value::unnamed_variant("Id", [Value::from_bytes(dest.0)]),
+            Value::u128(amount_planck),
+        ],
+    );
+    let events = client
+        .tx()
+        .await
+        .map_err(|e| format!("tx client unavailable: {e}"))?
+        .sign_and_submit_then_watch_default(&call, signer)
+        .await
+        .map_err(|e| format!("submit failed: {e}"))?
+        .wait_for_finalized_success()
+        .await
+        .map_err(|e| format!("transfer not finalized: {e}"))?;
+    Ok(format!("{:?}", events.extrinsic_hash()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// MANUAL live smoke (gated by env `ALICE_LIVE_SEND`; inert in normal `cargo test`).
+    /// Builds a test wallet from `ALICE_TEST_SEED_HEX` via the REAL wallet crypto (so its
+    /// address + signer are exactly what ships) and prints its address. With `ALICE_DO_SEND`
+    /// set it submits a real `Balances.transfer_keep_alive` to `ALICE_TEST_DEST` for
+    /// `ALICE_AMT` planck via the EXACT `submit_transfer` the GUI uses, and prints the hash.
+    #[test]
+    fn live_send_smoke() {
+        if std::env::var("ALICE_LIVE_SEND").is_err() {
+            return;
+        }
+        let seed_hex = std::env::var("ALICE_TEST_SEED_HEX").expect("ALICE_TEST_SEED_HEX");
+        let payload = crate::crypto::create_wallet_payload_from_seed_hex(&seed_hex, "smoke-pw")
+            .expect("create payload");
+        let secrets = crate::crypto::unlock_wallet(&payload, "smoke-pw")
+            .expect("unlock")
+            .secrets;
+        eprintln!("TEST_ADDRESS={}", secrets.address);
+        if std::env::var("ALICE_DO_SEND").is_err() {
+            return;
+        }
+        let dest = std::env::var("ALICE_TEST_DEST").expect("ALICE_TEST_DEST");
+        let amount: u128 = std::env::var("ALICE_AMT")
+            .expect("ALICE_AMT")
+            .parse()
+            .expect("amount");
+        let signer = secrets.to_keypair().expect("keypair");
+        let rt = tokio::runtime::Runtime::new().expect("tokio rt");
+        rt.block_on(async {
+            let client = get_client("wss://rpc.aliceprotocol.org")
+                .await
+                .expect("client");
+            let hash = submit_transfer(&client, &signer, &dest, amount)
+                .await
+                .expect("submit_transfer");
+            eprintln!("TRANSFER_HASH={hash}");
+        });
+    }
 
     fn valid_chain_identity() -> ChainIdentityEvidence {
         ChainIdentityEvidence {

@@ -119,6 +119,16 @@ pub enum AsyncAction {
     StopMiner,
     /// Poll the miner's live stats into the GUI.
     PollMinerStats,
+    /// Sign + submit a `Balances.transfer_keep_alive` and watch it to finality.
+    /// The signer is derived from the UNLOCKED seed on the UI thread (so a locked /
+    /// display-only wallet can never reach here) and wrapped in `Arc` so the
+    /// non-`Clone` keypair can ride this `#[derive(Clone)]` action enum.
+    SubmitTransfer {
+        rpc_url: String,
+        signer: std::sync::Arc<subxt_signer::sr25519::Keypair>,
+        dest: String,
+        amount_planck: u128,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,6 +156,10 @@ pub enum AsyncResult {
     MinerStats(MinerStats),
     /// A miner start request failed before it could be supervised.
     MinerErr(String),
+    /// Transfer finalized successfully; carries the extrinsic hash (`0x…`).
+    TransferOk(String),
+    /// Transfer failed (validation / submit / not-finalized / timeout).
+    TransferErr(String),
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -268,6 +282,11 @@ pub struct AliceWalletApp {
     pub send_note: String,
     pub send_review_ready: bool,
     pub send_review_error: Option<String>,
+    /// A transfer is dispatched and awaiting its finalized result (busy state).
+    pub send_in_flight: bool,
+    /// (recipient, amount_planck) carried from dispatch to the success handler so
+    /// the history record reflects what was actually sent.
+    pub pending_send: Option<(String, u128)>,
     pub lock_warn_shown: bool,
 
     // ui ephemeral
@@ -418,6 +437,8 @@ impl AliceWalletApp {
             send_note: String::new(),
             send_review_ready: false,
             send_review_error: None,
+            send_in_flight: false,
+            pending_send: None,
             lock_warn_shown: false,
             address_copied_at: None,
             mnemonic_copied_at: None,
@@ -1193,6 +1214,62 @@ impl AliceWalletApp {
         self.send_review_ready = false;
         self.send_review_error = None;
     }
+
+    /// True only when a real transfer may be submitted right now: the production
+    /// master gate is on, the wallet is UNLOCKED with a real signing seed (a
+    /// display-only / read-only wallet has none -> cannot sign), the node is ready
+    /// for chain ops (synced), the entered details passed review, and no transfer
+    /// is already in flight.
+    pub fn can_submit_transfer(&self) -> bool {
+        chain::PRODUCTION_TRANSFER_ALLOWED
+            && self
+                .secrets
+                .as_ref()
+                .map(|s| s.can_export_private_key())
+                .unwrap_or(false)
+            && self.node_sync.allows_balance_refresh()
+            && self.send_review_ready
+            && !self.send_in_flight
+    }
+
+    /// Derive the signer from the unlocked seed, mark the send in-flight, and
+    /// dispatch the transfer to the async worker. Fail-closed: any gate / parse /
+    /// keypair failure surfaces a toast and submits nothing.
+    pub fn submit_send(&mut self) {
+        if !self.can_submit_transfer() {
+            return;
+        }
+        let Some(secrets) = self.secrets.as_ref() else {
+            return;
+        };
+        let signer = match secrets.to_keypair() {
+            Ok(k) => std::sync::Arc::new(k),
+            Err(e) => {
+                self.toast = Some(Toast::err(self.t("toast.transfer_failed"), e));
+                return;
+            }
+        };
+        let amount_planck = match chain::parse_token_amount(&self.send_amount, chain::TOKEN_DECIMALS)
+        {
+            Ok(a) if a > 0 => a,
+            _ => {
+                self.toast = Some(Toast::err(
+                    self.t("toast.transfer_failed"),
+                    self.t("send.error_amount_invalid"),
+                ));
+                return;
+            }
+        };
+        let dest = self.send_recipient.trim().to_string();
+        self.pending_send = Some((dest.clone(), amount_planck));
+        self.send_in_flight = true;
+        let _ = self.tx.send(AsyncAction::SubmitTransfer {
+            rpc_url: self.settings.rpc_url.clone(),
+            signer,
+            dest,
+            amount_planck,
+        });
+    }
 }
 
 fn qa_page_from_env() -> Page {
@@ -1632,6 +1709,50 @@ fn spawn_worker(
                 }
                 AsyncAction::PollMinerStats => {
                     let _ = tx.send(AsyncResult::MinerStats(miner_supervisor.stats()));
+                }
+                AsyncAction::SubmitTransfer {
+                    rpc_url,
+                    signer,
+                    dest,
+                    amount_planck,
+                } => {
+                    let tx = tx.clone();
+                    rt.spawn(async move {
+                        let fut = async {
+                            match chain::get_client(&rpc_url).await {
+                                Ok(client) => {
+                                    match chain::submit_transfer(
+                                        &client,
+                                        &signer,
+                                        &dest,
+                                        amount_planck,
+                                    )
+                                    .await
+                                    {
+                                        Ok(hash) => {
+                                            let _ = tx.send(AsyncResult::TransferOk(hash));
+                                        }
+                                        Err(e) => {
+                                            let _ = tx.send(AsyncResult::TransferErr(e));
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    let _ = tx.send(AsyncResult::TransferErr(e));
+                                }
+                            }
+                        };
+                        // Transfers wait for FINALITY (GRANDPA) — allow more headroom
+                        // than a plain read.
+                        if tokio::time::timeout(Duration::from_secs(90), fut)
+                            .await
+                            .is_err()
+                        {
+                            let _ = tx.send(AsyncResult::TransferErr(
+                                "transfer timed out waiting for finality".into(),
+                            ));
+                        }
+                    });
                 }
                 AsyncAction::Unlock(payload, mut password) => {
                     let tx = tx.clone();
@@ -2213,6 +2334,29 @@ impl AliceWalletApp {
             }
             AsyncResult::MinerErr(err) => {
                 self.toast = Some(Toast::err(self.t("mining.start_failed_title"), err));
+            }
+            AsyncResult::TransferOk(hash) => {
+                self.send_in_flight = false;
+                self.toast = Some(Toast::ok(self.t("toast.transfer_sent"), hash.clone()));
+                if let Some((dest, amount)) = self.pending_send.take() {
+                    self.push_history(TxRecord {
+                        ts: chrono::Utc::now(),
+                        kind: history::TxKind::Send,
+                        amount: Some(amount),
+                        counterparty: Some(dest),
+                        hash,
+                        ok: true,
+                    });
+                }
+                self.send_recipient.clear();
+                self.send_amount.clear();
+                self.send_note.clear();
+                self.reset_send_review();
+            }
+            AsyncResult::TransferErr(err) => {
+                self.send_in_flight = false;
+                self.pending_send = None;
+                self.toast = Some(Toast::err(self.t("toast.transfer_failed"), err));
             }
         }
     }
