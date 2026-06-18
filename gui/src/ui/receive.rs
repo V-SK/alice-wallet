@@ -82,6 +82,17 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
     ui.add_space(14.0);
     card(ui, |ui| {
         section_title(ui, "Request labels");
+        // G10: create a labeled receive request (optional amount hint) for this address.
+        let label_hint = app.t("receive.request_label_hint");
+        let _ = text_input(ui, &mut app.rr_draft_label, label_hint);
+        ui.add_space(6.0);
+        let amount_hint = app.t("receive.request_amount_hint");
+        let _ = text_input(ui, &mut app.rr_draft_amount, amount_hint);
+        ui.add_space(8.0);
+        if primary_button(ui, app.t("receive.create_request_button"), true, false).clicked() {
+            app.create_receive_request();
+        }
+        ui.add_space(12.0);
         let requests = app.active_receive_requests();
         if requests.is_empty() {
             ui.label(

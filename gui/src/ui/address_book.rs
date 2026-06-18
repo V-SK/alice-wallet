@@ -11,6 +11,7 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
     ui.add_space(16.0);
 
     let records = app.active_address_book_records();
+    let mut to_delete: Option<String> = None;
     card(ui, |ui| {
         section_title(ui, app.t("address_book.empty_title"));
         ui.add_space(8.0);
@@ -29,39 +30,47 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
                 );
             });
         } else {
-            for record in records {
+            for record in &records {
                 book_row(ui, &record.label, &short_address(&record.address));
-                if !record.note.is_empty() {
-                    ui.add_space(4.0);
-                    ui.label(RichText::new(&record.note).size(11.5).color(THEME.text_mid));
-                }
+                ui.horizontal(|ui| {
+                    if !record.note.is_empty() {
+                        ui.label(RichText::new(&record.note).size(11.5).color(THEME.text_mid));
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ghost_button(ui, app.t("common.delete")).clicked() {
+                            to_delete = Some(record.record_id.clone());
+                        }
+                    });
+                });
                 ui.add_space(8.0);
             }
         }
     });
+    if let Some(id) = to_delete {
+        app.remove_address_book(&id);
+    }
 
     ui.add_space(14.0);
 
     card(ui, |ui| {
         section_title(ui, app.t("address_book.schema_title"));
-        book_row(
-            ui,
-            app.t("address_book.field_label"),
-            app.t("address_book.field_label_value"),
-        );
+        ui.add_space(6.0);
+        field_label(ui, app.t("address_book.field_label"));
+        let label_hint = app.t("address_book.field_label_value");
+        let _ = text_input(ui, &mut app.ab_draft_label, label_hint);
         ui.add_space(8.0);
-        book_row(
-            ui,
-            app.t("address_book.field_address"),
-            app.t("address_book.field_address_value"),
-        );
+        field_label(ui, app.t("address_book.field_address"));
+        let addr_hint = app.t("address_book.field_address_value");
+        let _ = text_input(ui, &mut app.ab_draft_address, addr_hint);
         ui.add_space(8.0);
-        book_row(
-            ui,
-            app.t("address_book.field_note"),
-            app.t("address_book.field_note_value"),
-        );
+        field_label(ui, app.t("address_book.field_note"));
+        let note_hint = app.t("address_book.field_note_value");
+        let _ = text_input(ui, &mut app.ab_draft_note, note_hint);
         ui.add_space(12.0);
+        if primary_button(ui, app.t("address_book.add_button"), true, false).clicked() {
+            app.add_address_book();
+        }
+        ui.add_space(8.0);
         ui.label(
             RichText::new(app.t("address_book.safety_note"))
                 .size(12.0)

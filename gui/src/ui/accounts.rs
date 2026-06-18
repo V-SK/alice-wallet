@@ -15,6 +15,39 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
 
     section_title(ui, app.t("accounts.title"));
     heading(ui, "Wallet profile");
+
+    // G12: inline rename editor (shown while a profile rename is in progress). Labels are
+    // &'static (i18n literals) so they don't conflict with the `&mut` draft borrow.
+    {
+        let name_hint = app.t("accounts.rename_hint");
+        let save_label = app.t("common.save");
+        let cancel_label = app.t("send.cancel");
+        let mut do_rename: Option<(String, String)> = None;
+        let mut cancel_rename = false;
+        if let Some((pid, name)) = app.profile_rename_draft.as_mut() {
+            let pid = pid.clone();
+            ui.add_space(12.0);
+            card(ui, |ui| {
+                field_label(ui, name_hint);
+                let _ = text_input(ui, name, name_hint);
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if primary_button(ui, save_label, true, false).clicked() {
+                        do_rename = Some((pid.clone(), name.clone()));
+                    }
+                    if ghost_button(ui, cancel_label).clicked() {
+                        cancel_rename = true;
+                    }
+                });
+            });
+        }
+        if let Some((pid, new_name)) = do_rename {
+            app.rename_profile_action(&pid, &new_name);
+        }
+        if cancel_rename {
+            app.profile_rename_draft = None;
+        }
+    }
     ui.add_space(4.0);
     subtle(ui, app.t("accounts.subtitle"));
     ui.add_space(16.0);
@@ -221,6 +254,17 @@ fn profile_row(
                     } else if secondary_button(ui, app.t("accounts.switch"), true, false).clicked()
                     {
                         app.select_wallet_profile(&profile.profile_id);
+                    }
+                    // G12: rename (any profile) + archive (non-active only; the manager
+                    // refuses to archive the active/last profile).
+                    if !is_active
+                        && ghost_button(ui, app.t("accounts.archive_button")).clicked()
+                    {
+                        app.archive_profile_action(&profile.profile_id);
+                    }
+                    if ghost_button(ui, app.t("accounts.rename_button")).clicked() {
+                        app.profile_rename_draft =
+                            Some((profile.profile_id.clone(), profile.label.clone()));
                     }
                 });
             });
