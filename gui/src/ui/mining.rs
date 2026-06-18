@@ -41,8 +41,9 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
         section_title(ui, app.t("mining.route_title"));
         status_row(ui, app.t("mining.route"), app.t("mining.route_xmr"));
         ui.add_space(8.0);
-        // Mining status as a coloured pill. Execution is OFF, so the engine never
-        // reports "running"; the pill reflects evidence readiness, not live mining.
+        // Reward-EVIDENCE readiness pill (distinct from the LIVE engine state shown in
+        // the engine card below). Mining execution IS enabled; this pill reflects whether
+        // the reward-evidence path is ready, not whether the miner is currently hashing.
         egui::Frame::NONE
             .fill(THEME.bg_panel_hi)
             .corner_radius(10)
@@ -51,7 +52,7 @@ pub fn render(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
-                        RichText::new(app.t("mining.status").to_uppercase())
+                        RichText::new(app.t("mining.evidence_status").to_uppercase())
                             .size(10.0)
                             .strong()
                             .color(THEME.text_dim),
@@ -221,6 +222,15 @@ fn rewards_panel(ui: &mut egui::Ui, app: &AliceWalletApp, rewards: &miner::Walle
             RichText::new(app.t("mining.rewards_cadence"))
                 .size(12.0)
                 .color(THEME.text_mid),
+        );
+        ui.add_space(6.0);
+        // G13: these figures are populated by the ON-CHAIN reward system (not yet live in
+        // the credit-only era) — make that explicit so empty values don't read as broken.
+        ui.label(
+            RichText::new(app.t("mining.rewards_placeholder"))
+                .size(11.5)
+                .italics()
+                .color(THEME.text_dim),
         );
         ui.add_space(12.0);
 
