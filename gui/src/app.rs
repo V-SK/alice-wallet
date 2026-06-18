@@ -158,8 +158,11 @@ pub enum AsyncResult {
     MinerErr(String),
     /// Transfer finalized successfully; carries the extrinsic hash (`0x…`).
     TransferOk(String),
-    /// Transfer failed (validation / submit / not-finalized / timeout).
+    /// Transfer failed BEFORE broadcast (retry-safe).
     TransferErr(String),
+    /// Transfer was (or may have been) BROADCAST but not confirmed within the window
+    /// (B2): it might still finalize, so the UI must NOT offer a clean retry.
+    TransferUncertain(String),
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -284,9 +287,22 @@ pub struct AliceWalletApp {
     pub send_review_error: Option<String>,
     /// A transfer is dispatched and awaiting its finalized result (busy state).
     pub send_in_flight: bool,
+    /// B2: a transfer was broadcast but its outcome is UNCERTAIN (timeout / lost
+    /// confirmation). Blocks resend (double-spend guard) until the user verifies in
+    /// history and explicitly resets.
+    pub send_uncertain: bool,
     /// (recipient, amount_planck) carried from dispatch to the success handler so
     /// the history record reflects what was actually sent.
     pub pending_send: Option<(String, u128)>,
+    /// Address-book "add contact" form drafts (G11).
+    pub ab_draft_label: String,
+    pub ab_draft_address: String,
+    pub ab_draft_note: String,
+    /// Receive-request "create request" form drafts (G10).
+    pub rr_draft_label: String,
+    pub rr_draft_amount: String,
+    /// Per-profile rename draft, keyed by the profile being edited (G12).
+    pub profile_rename_draft: Option<(String, String)>,
     pub lock_warn_shown: bool,
 
     // ui ephemeral
@@ -438,7 +454,14 @@ impl AliceWalletApp {
             send_review_ready: false,
             send_review_error: None,
             send_in_flight: false,
+            send_uncertain: false,
             pending_send: None,
+            ab_draft_label: String::new(),
+            ab_draft_address: String::new(),
+            ab_draft_note: String::new(),
+            rr_draft_label: String::new(),
+            rr_draft_amount: String::new(),
+            profile_rename_draft: None,
             lock_warn_shown: false,
             address_copied_at: None,
             mnemonic_copied_at: None,
@@ -825,6 +848,10 @@ impl AliceWalletApp {
                 self.phase = Phase::Main;
                 self.page = Page::Dashboard;
                 self.auth_error.clear();
+                // G9: persist the active-profile switch (the Normal path persists on
+                // unlock; the display-only/read-only path had no save, so the choice
+                // was lost on restart).
+                let _ = self.profile_manager.save();
             }
             WalletProfileAccess::Normal => {
                 let path = if profile.profile_id == LEGACY_PROFILE_ID {
@@ -1230,6 +1257,7 @@ impl AliceWalletApp {
             && self.node_sync.allows_balance_refresh()
             && self.send_review_ready
             && !self.send_in_flight
+            && !self.send_uncertain
     }
 
     /// Derive the signer from the unlocked seed, mark the send in-flight, and
@@ -1263,12 +1291,100 @@ impl AliceWalletApp {
         let dest = self.send_recipient.trim().to_string();
         self.pending_send = Some((dest.clone(), amount_planck));
         self.send_in_flight = true;
+        // B1 fix: broadcast to the SAME node the safety gate validated (sync/genesis/
+        // balance all come from effective_rpc_url), not the raw remote rpc_url — they
+        // diverge in LocalEmbedded mode and would misdirect the transfer.
         let _ = self.tx.send(AsyncAction::SubmitTransfer {
-            rpc_url: self.settings.rpc_url.clone(),
+            rpc_url: self.effective_rpc_url(),
             signer,
             dest,
             amount_planck,
         });
+    }
+
+    /// G11: add an address-book contact from the draft form. The manager validates the
+    /// address + metadata and returns Err on bad input; on success we persist + clear.
+    pub fn add_address_book(&mut self) {
+        let Some(pid) = self.active_profile_id() else {
+            return;
+        };
+        let label = self.ab_draft_label.trim().to_string();
+        let address = self.ab_draft_address.trim().to_string();
+        let note = self.ab_draft_note.trim().to_string();
+        match self
+            .profile_manager
+            .add_address_book_record(&pid, &label, &address, &note)
+        {
+            Ok(_) => {
+                let _ = self.profile_manager.save();
+                self.ab_draft_label.clear();
+                self.ab_draft_address.clear();
+                self.ab_draft_note.clear();
+                self.toast = Some(Toast::ok(self.t("common.added"), String::new()));
+            }
+            Err(e) => self.toast = Some(Toast::err(self.t("common.save_failed"), e)),
+        }
+    }
+
+    /// G11: archive (soft-remove) an address-book contact + persist.
+    pub fn remove_address_book(&mut self, record_id: &str) {
+        if self
+            .profile_manager
+            .remove_address_book_record(record_id)
+            .is_ok()
+        {
+            let _ = self.profile_manager.save();
+        }
+    }
+
+    /// G10: create a labeled receive request (optional amount hint) for the active
+    /// address + persist.
+    pub fn create_receive_request(&mut self) {
+        let Some(pid) = self.active_profile_id() else {
+            return;
+        };
+        let Some(address) = self.secrets.as_ref().map(|s| s.address.clone()) else {
+            return;
+        };
+        let label = self.rr_draft_label.trim().to_string();
+        let amount = self.rr_draft_amount.trim();
+        let amount_hint = (!amount.is_empty()).then(|| amount.to_string());
+        match self
+            .profile_manager
+            .add_receive_request(&pid, &label, &address, amount_hint)
+        {
+            Ok(_) => {
+                let _ = self.profile_manager.save();
+                self.rr_draft_label.clear();
+                self.rr_draft_amount.clear();
+                self.toast = Some(Toast::ok(self.t("common.added"), String::new()));
+            }
+            Err(e) => self.toast = Some(Toast::err(self.t("common.save_failed"), e)),
+        }
+    }
+
+    /// G12: rename a profile + persist.
+    pub fn rename_profile_action(&mut self, profile_id: &str, label: &str) {
+        match self.profile_manager.rename_profile(profile_id, label.trim()) {
+            Ok(_) => {
+                let _ = self.profile_manager.save();
+                self.profile_rename_draft = None;
+                self.toast = Some(Toast::ok(self.t("common.saved"), String::new()));
+            }
+            Err(e) => self.toast = Some(Toast::err(self.t("common.save_failed"), e)),
+        }
+    }
+
+    /// G12: archive a profile + persist. The manager refuses to archive the active or
+    /// the last remaining profile (returns Err), which we surface.
+    pub fn archive_profile_action(&mut self, profile_id: &str) {
+        match self.profile_manager.archive_profile(profile_id) {
+            Ok(_) => {
+                let _ = self.profile_manager.save();
+                self.toast = Some(Toast::ok(self.t("common.saved"), String::new()));
+            }
+            Err(e) => self.toast = Some(Toast::err(self.t("common.save_failed"), e)),
+        }
     }
 }
 
@@ -1732,24 +1848,32 @@ fn spawn_worker(
                                         Ok(hash) => {
                                             let _ = tx.send(AsyncResult::TransferOk(hash));
                                         }
+                                        // B2: PENDING: = the extrinsic may have broadcast and
+                                        // could still finalize -> UNCERTAIN (no auto-retry).
+                                        Err(e) if e.starts_with("PENDING:") => {
+                                            let _ = tx.send(AsyncResult::TransferUncertain(e));
+                                        }
                                         Err(e) => {
                                             let _ = tx.send(AsyncResult::TransferErr(e));
                                         }
                                     }
                                 }
+                                // Connect failed = nothing broadcast = retry-safe.
                                 Err(e) => {
-                                    let _ = tx.send(AsyncResult::TransferErr(e));
+                                    let _ = tx
+                                        .send(AsyncResult::TransferErr(format!("PRECHECK: {e}")));
                                 }
                             }
                         };
-                        // Transfers wait for FINALITY (GRANDPA) — allow more headroom
-                        // than a plain read.
+                        // B2: a finality timeout means the tx was likely broadcast and may
+                        // STILL finalize. Report UNCERTAIN so the UI does NOT clear to a clean
+                        // retryable form (a retry would double-spend).
                         if tokio::time::timeout(Duration::from_secs(90), fut)
                             .await
                             .is_err()
                         {
-                            let _ = tx.send(AsyncResult::TransferErr(
-                                "transfer timed out waiting for finality".into(),
+                            let _ = tx.send(AsyncResult::TransferUncertain(
+                                "broadcast — finality is taking longer than 90s; check history before resending".into(),
                             ));
                         }
                     });
@@ -2357,6 +2481,14 @@ impl AliceWalletApp {
                 self.send_in_flight = false;
                 self.pending_send = None;
                 self.toast = Some(Toast::err(self.t("toast.transfer_failed"), err));
+            }
+            AsyncResult::TransferUncertain(msg) => {
+                // B2: broadcast but unconfirmed — do NOT clear to a retryable form.
+                // Block resend (send_uncertain gate) + keep the details visible until the
+                // user verifies in history and explicitly resets.
+                self.send_in_flight = false;
+                self.send_uncertain = true;
+                self.toast = Some(Toast::err(self.t("send.uncertain_title"), msg));
             }
         }
     }

@@ -5,6 +5,11 @@ use subxt::rpcs::{rpc_params, RpcClient};
 use subxt::{OnlineClient, PolkadotConfig};
 
 pub const TOKEN_DECIMALS: u32 = 12;
+/// Conservative reserve (0.01 ALICE) kept back on a send to cover the network fee +
+/// existential-deposit keep-alive headroom, since the wallet does not yet do a live
+/// `payment_queryInfo` fee estimate (audit S1). Prevents a "send max" that would pass
+/// local review then fail on-chain after consuming the fee.
+pub const FEE_ED_MARGIN_PLANCK: u128 = 10_000_000_000;
 pub const NODE_SYNC_FRESHNESS_TTL_SECONDS: u64 = 90;
 pub const PRODUCTION_TRANSFER_ALLOWED: bool = true;
 pub const PAYOUT_ALLOWED: bool = false;
@@ -627,10 +632,21 @@ pub async fn submit_transfer(
     dest_address: &str,
     amount_planck: u128,
 ) -> Result<String, String> {
+    // --- PRECHECK phase: errors here mean NOTHING was broadcast -> safe to retry.
+    // The caller distinguishes "PRECHECK:" (retry-safe) from "PENDING:" (broadcast may
+    // have occurred -> do NOT auto-retry, double-spend risk) by the error prefix.
     let dest = subxt::utils::AccountId32::from_str(dest_address.trim())
-        .map_err(|_| "Invalid recipient address".to_string())?;
+        .map_err(|_| "PRECHECK: Invalid recipient address".to_string())?;
     if amount_planck == 0 {
-        return Err("Amount must be greater than zero".to_string());
+        return Err("PRECHECK: Amount must be greater than zero".to_string());
+    }
+    // B1 defense-in-depth: never sign+broadcast against a node that is not OUR chain.
+    // Genesis hash is the immutable chain identity; catches a stale/wrong/malicious endpoint.
+    let genesis = format!("{:?}", client.genesis_hash());
+    if genesis != ALICE_MAINNET_GENESIS_HASH {
+        return Err(format!(
+            "PRECHECK: refusing to sign — connected node genesis {genesis} is not Alice mainnet"
+        ));
     }
     // dest: MultiAddress::Id(AccountId32); value: Compact<u128> (encoded per live metadata).
     let call = subxt::dynamic::tx(
@@ -641,16 +657,19 @@ pub async fn submit_transfer(
             Value::u128(amount_planck),
         ],
     );
-    let events = client
+    let mut tx_client = client
         .tx()
         .await
-        .map_err(|e| format!("tx client unavailable: {e}"))?
+        .map_err(|e| format!("PRECHECK: tx client unavailable: {e}"))?;
+    // --- BROADCAST phase: from here the extrinsic may be on the wire. Any failure is
+    // PENDING (the transfer might still finalize), NOT a clean retry.
+    let events = tx_client
         .sign_and_submit_then_watch_default(&call, signer)
         .await
-        .map_err(|e| format!("submit failed: {e}"))?
+        .map_err(|e| format!("PENDING: broadcast may have occurred: {e}"))?
         .wait_for_finalized_success()
         .await
-        .map_err(|e| format!("transfer not finalized: {e}"))?;
+        .map_err(|e| format!("PENDING: broadcast but not confirmed: {e}"))?;
     Ok(format!("{:?}", events.extrinsic_hash()))
 }
 
@@ -726,8 +745,10 @@ mod tests {
     }
 
     #[test]
-    fn production_execution_flags_remain_false() {
-        assert!(!PRODUCTION_TRANSFER_ALLOWED);
+    fn transfer_enabled_but_payout_settlement_mint_stay_off() {
+        // v0.1.3: user-initiated transfers are ON (transfer_keep_alive); the
+        // protocol-economic execution flags must remain OFF (credit-only era).
+        assert!(PRODUCTION_TRANSFER_ALLOWED);
         assert!(!PAYOUT_ALLOWED);
         assert!(!SETTLEMENT_ALLOWED);
         assert!(!MINT_ALLOWED);

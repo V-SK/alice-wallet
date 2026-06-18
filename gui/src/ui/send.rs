@@ -95,11 +95,15 @@ fn prepare_review(app: &mut AliceWalletApp) {
         }
     };
 
-    if let Some(balance) = app.balance {
-        if amount > balance {
-            app.send_review_error = Some(app.t("send.error_amount_balance").to_string());
-            return;
-        }
+    // S2: an unknown balance is NOT a pass — block review until we have a real figure.
+    let Some(balance) = app.balance else {
+        app.send_review_error = Some(app.t("send.error_balance_unknown").to_string());
+        return;
+    };
+    // S1: require room for the amount PLUS a fee/ED reserve (not just amount <= balance).
+    if amount.saturating_add(chain::FEE_ED_MARGIN_PLANCK) > balance {
+        app.send_review_error = Some(app.t("send.error_amount_balance").to_string());
+        return;
     }
 
     app.send_review_ready = true;
@@ -139,34 +143,61 @@ fn review_card(ui: &mut egui::Ui, app: &mut AliceWalletApp) {
         );
 
         ui.add_space(14.0);
-        let ready = app.can_submit_transfer();
-        let busy = app.send_in_flight;
-        // Explain why send is blocked, so the disabled button isn't a dead end.
-        if !ready && !busy {
-            let reason = if !app.node_sync.allows_balance_refresh() {
-                app.t("send.blocked_not_synced")
-            } else {
-                app.t("send.blocked_locked")
-            };
+        if app.send_uncertain {
+            // B2: a prior send was broadcast but not confirmed — it MAY still finalize.
+            // Block a clean retry (double-spend guard); require an explicit reset after
+            // the user verifies in Activity/history.
             egui::Frame::NONE
                 .fill(THEME.warning_bg)
                 .corner_radius(10)
                 .inner_margin(egui::Margin::symmetric(12, 10))
                 .stroke(Stroke::new(1.0, THEME.border_accent))
                 .show(ui, |ui| {
-                    ui.label(RichText::new(reason).size(12.5).color(THEME.text_hi));
+                    ui.label(
+                        RichText::new(app.t("send.uncertain_body"))
+                            .size(12.5)
+                            .color(THEME.text_hi),
+                    );
                 });
             ui.add_space(12.0);
-        }
-
-        ui.horizontal(|ui| {
-            if primary_button(ui, app.t("send.confirm_send"), ready, busy).clicked() {
-                app.submit_send();
-            }
-            if ghost_button(ui, app.t("send.cancel")).clicked() {
+            if primary_button(ui, app.t("send.uncertain_reset"), true, false).clicked() {
+                app.send_uncertain = false;
+                app.pending_send = None;
+                app.send_recipient.clear();
+                app.send_amount.clear();
+                app.send_note.clear();
                 app.reset_send_review();
             }
-        });
+        } else {
+            let ready = app.can_submit_transfer();
+            let busy = app.send_in_flight;
+            // Explain why send is blocked, so the disabled button isn't a dead end.
+            if !ready && !busy {
+                let reason = if !app.node_sync.allows_balance_refresh() {
+                    app.t("send.blocked_not_synced")
+                } else {
+                    app.t("send.blocked_locked")
+                };
+                egui::Frame::NONE
+                    .fill(THEME.warning_bg)
+                    .corner_radius(10)
+                    .inner_margin(egui::Margin::symmetric(12, 10))
+                    .stroke(Stroke::new(1.0, THEME.border_accent))
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(reason).size(12.5).color(THEME.text_hi));
+                    });
+                ui.add_space(12.0);
+            }
+
+            ui.horizontal(|ui| {
+                if primary_button(ui, app.t("send.confirm_send"), ready, busy).clicked() {
+                    app.submit_send();
+                }
+                if ghost_button(ui, app.t("send.cancel")).clicked() {
+                    app.reset_send_review();
+                }
+            });
+        }
     });
 }
 
