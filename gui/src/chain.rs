@@ -14,7 +14,12 @@ pub const ALICE_MAINNET_CHAIN_NAME: &str = "Alice Mainnet";
 pub const ALICE_MAINNET_GENESIS_HASH: &str =
     "0x7746a1d14736a95e00a617a11094b6e86bbf91cd4e7e64c0e748e3c0d2ad54b0";
 pub const ALICE_RUNTIME_SPEC_NAME: &str = "solochain-template-runtime";
-pub const ALICE_APPROVED_RUNTIME_SPEC_VERSIONS: [u32; 1] = [110];
+/// MINIMUM accepted runtime spec version. The chain is forkless-upgradeable (110 -> 111 on
+/// 2026-06-16, more to come), and the subxt `OnlineClient` fetches metadata DYNAMICALLY, so a
+/// newer runtime is fine — chain identity is pinned by the genesis hash above. An EXACT
+/// allowlist (was `[110]`) rejected the chain the moment it upgraded to 111 ("wrong_runtime_spec_version",
+/// looked like an RPC outage), and would re-break every future upgrade. Accept `>=` the minimum.
+pub const ALICE_MIN_RUNTIME_SPEC_VERSION: u32 = 110;
 
 pub type Client = OnlineClient<PolkadotConfig>;
 
@@ -443,7 +448,7 @@ fn validate_chain_identity(identity: Option<&ChainIdentityEvidence>) -> Result<(
     if identity.runtime_spec_name.trim() != ALICE_RUNTIME_SPEC_NAME {
         return Err("wrong_runtime_spec_name");
     }
-    if !ALICE_APPROVED_RUNTIME_SPEC_VERSIONS.contains(&identity.runtime_spec_version) {
+    if identity.runtime_spec_version < ALICE_MIN_RUNTIME_SPEC_VERSION {
         return Err("wrong_runtime_spec_version");
     }
     Ok(())
@@ -615,7 +620,7 @@ mod tests {
             chain_name: ALICE_MAINNET_CHAIN_NAME.to_string(),
             genesis_hash: ALICE_MAINNET_GENESIS_HASH.to_string(),
             runtime_spec_name: ALICE_RUNTIME_SPEC_NAME.to_string(),
-            runtime_spec_version: ALICE_APPROVED_RUNTIME_SPEC_VERSIONS[0],
+            runtime_spec_version: ALICE_MIN_RUNTIME_SPEC_VERSION,
         }
     }
 
