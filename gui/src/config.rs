@@ -90,8 +90,14 @@ fn wallet_data_root_override() -> Option<PathBuf> {
 /// `ALICE_WALLET_DATA_ROOT` (and the tests that read the derived data root).
 /// Tests in different modules share THIS one mutex so the parallel runner can
 /// never observe a half-set override from a sibling test in another module.
-#[cfg(test)]
-pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+///
+/// Lives in the library crate so BOTH the lib's own tests (e.g. `update`) and
+/// the GUI bin's tests (e.g. `app`) lock the SAME static instance — they link
+/// the one shared `gui` lib artifact. Hence it is plain `pub` (a `pub(crate)`
+/// item would be unreachable from the bin crate) and unconditionally compiled
+/// (a `#[cfg(test)]` item would not exist in the lib as the bin links it).
+/// It is a zero-cost zero-sized mutex; harmless in non-test builds.
+pub static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 impl Settings {
     pub fn load() -> Self {

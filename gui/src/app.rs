@@ -1436,7 +1436,7 @@ mod tests {
 
     /// Shared, process-wide env lock so these tests serialize against the env
     /// tests in OTHER modules (e.g. `update`) that also set `ALICE_WALLET_DATA_ROOT`.
-    use crate::config::TEST_ENV_LOCK as ENV_LOCK;
+    use gui::config::TEST_ENV_LOCK as ENV_LOCK;
 
     fn phase40t_temp_root(label: &str) -> std::path::PathBuf {
         let stamp = SystemTime::now()

@@ -3,7 +3,19 @@ name = "gui"
 version = "0.1.4"
 edition = "2021"
 
+# Headless CLI wallet. Lives in this crate so it reuses the display-free `gui`
+# LIBRARY core (chain/crypto/config/wallet_profiles) WITHOUT linking eframe/egui
+# or any GUI module — it imports only `gui::{chain, crypto, config, ...}`, never
+# `app`/`ui`. Runs on headless Linux servers. See src/bin/alice_wallet_cli.rs.
+[[bin]]
+name = "alice-wallet-cli"
+path = "src/bin/alice_wallet_cli.rs"
+
 [dependencies]
+# CLI arg parser for the headless wallet binary. Pure logic, no display deps.
+clap = { version = "4", features = ["derive"] }
+# No-echo password prompt for the headless `send`/`sign` keystore unlock.
+rpassword = "7"
 aes-gcm = "0.10.3"
 argon2 = "0.5.3"
 base64 = "0.22.1"

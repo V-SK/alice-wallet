@@ -148,6 +148,39 @@ pub fn detect_wallet_path() -> PathBuf {
     primary
 }
 
+/// Resolve the wallet file the headless CLI (and any non-GUI consumer) should
+/// operate on, then read+parse it.
+///
+/// Resolution mirrors the GUI's `check_wallet` flow without any UI: prefer the
+/// ACTIVE multi-wallet profile's `wallet.json` if one exists on disk, otherwise
+/// fall back to the single-file detected default path (new default dir, then the
+/// legacy `~/.alice` location). Returns the parsed [`WalletPayload`] together
+/// with the path it came from so callers can report it.
+///
+/// This only reads the PUBLIC metadata (version, address, public key, encrypted
+/// blobs); it never decrypts. Unlocking still requires [`unlock_wallet`] with a
+/// password. Lives in the lib so it is display-free and unit-testable.
+pub fn load_active_wallet_payload() -> Result<(WalletPayload, PathBuf), String> {
+    let manager =
+        crate::wallet_profiles::WalletProfileManager::load_or_default(config::wallet_data_root());
+    let candidate = manager
+        .active_wallet_path()
+        .filter(|path| path.exists())
+        .unwrap_or_else(detect_wallet_path);
+
+    if !candidate.exists() {
+        return Err(format!(
+            "No wallet found. Looked for an active profile and {}. Create a wallet in the Alice Wallet GUI first.",
+            candidate.display()
+        ));
+    }
+    let content = fs::read_to_string(&candidate)
+        .map_err(|e| format!("Failed to read wallet file {}: {}", candidate.display(), e))?;
+    let payload = serde_json::from_str::<WalletPayload>(&content)
+        .map_err(|e| format!("Wallet file {} is not a valid keystore: {}", candidate.display(), e))?;
+    Ok((payload, candidate))
+}
+
 /// Rename any existing wallet file to `wallet.json.bak-<timestamp>` so that an
 /// import/overwrite can never destroy an old wallet silently.
 pub fn backup_existing_wallet(path: &Path) -> Result<Option<PathBuf>, String> {

@@ -179,6 +179,12 @@ jobs:
           mkdir -p dist/AliceWallet
           cp gui/target/${{ matrix.target }}/release/gui dist/AliceWallet/AliceWallet
           chmod +x dist/AliceWallet/AliceWallet
+          # Headless CLI wallet — same crate, built by the same `cargo build
+          # --release` above (it builds every [[bin]]). Ships beside the GUI so a
+          # server-side / SSH user can run the wallet with no display. Links zero
+          # eframe/egui (verified via otool/nm), so it works on headless Linux.
+          cp gui/target/${{ matrix.target }}/release/alice-wallet-cli dist/AliceWallet/alice-wallet-cli
+          chmod +x dist/AliceWallet/alice-wallet-cli
           cp gui/assets/brand/alice-logo.svg dist/AliceWallet/
           # Embedded node (optional) — sibling layout per gui/src/node.rs.
           if [ -f node-stage/solochain-template-node ]; then
@@ -217,6 +223,8 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force dist/AliceWallet | Out-Null
           Copy-Item gui/target/${{ matrix.target }}/release/gui.exe dist/AliceWallet/AliceWallet.exe
+          # Headless CLI wallet (same crate / same release build). Ships beside the GUI.
+          Copy-Item gui/target/${{ matrix.target }}/release/alice-wallet-cli.exe dist/AliceWallet/alice-wallet-cli.exe
           Copy-Item gui/assets/brand/alice-logo.svg dist/AliceWallet/
           # Embedded node (optional) — sibling layout per gui/src/node.rs.
           if (Test-Path node-stage/solochain-template-node.exe) {
@@ -241,6 +249,10 @@ jobs:
           mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
           cp gui/target/${{ matrix.target }}/release/gui "$APP/Contents/MacOS/AliceWallet"
           chmod +x "$APP/Contents/MacOS/AliceWallet"
+          # Headless CLI wallet (same crate / same release build) beside the GUI
+          # in MacOS/. Codesigned as a nested binary below, before the bundle sign.
+          cp gui/target/${{ matrix.target }}/release/alice-wallet-cli "$APP/Contents/MacOS/alice-wallet-cli"
+          chmod +x "$APP/Contents/MacOS/alice-wallet-cli"
           cp gui/assets/brand/alice-logo.svg "$APP/Contents/Resources/"
           # Embedded node (optional): binary beside the wallet in MacOS/, spec
           # in Resources/ — matches gui/src/node.rs resolution candidates.
@@ -277,7 +289,10 @@ jobs:
           </dict>
           </plist>
           EOF
-          # Sign nested binaries first (node + miner, if present), then the bundle.
+          # Sign nested binaries first (CLI + node + miner, if present), then the bundle.
+          if [ -f "$APP/Contents/MacOS/alice-wallet-cli" ]; then
+            codesign --force -s - "$APP/Contents/MacOS/alice-wallet-cli" || true
+          fi
           if [ -f "$APP/Contents/MacOS/solochain-template-node" ]; then
             codesign --force -s - "$APP/Contents/MacOS/solochain-template-node" || true
           fi

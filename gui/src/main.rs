@@ -1,15 +1,14 @@
+// The display-independent wallet core now lives in the `gui` LIBRARY crate
+// (`src/lib.rs`). Re-import those modules at the bin's crate root so the
+// unchanged `crate::chain` / `crate::config` / … paths inside `app` and `ui`
+// keep resolving here, while a future display-free binary can depend on the
+// same library without linking eframe/egui.
+use gui::{chain, config, crypto, history, i18n, miner, node, supervise, update, wallet_profiles};
+
+// GUI-only modules — the SOLE consumers of eframe/egui. Kept in the binary so
+// the library stays display-free.
 mod app;
-mod chain;
-mod config;
-mod crypto;
-mod history;
-mod i18n;
-mod miner;
-mod node;
-mod supervise;
 mod ui;
-mod update;
-mod wallet_profiles;
 
 use eframe::egui::IconData;
 
