@@ -2102,6 +2102,11 @@ fn spawn_update_worker(
                     )));
                     wake(&repaint);
                     let outcome = (|| {
+                        // Fail FAST (before a long download) if the app can't be
+                        // replaced in place — e.g. macOS App Translocation (opened
+                        // from a download) or a non-writable Applications folder.
+                        // Surfaces an actionable message instead of a deep IO error.
+                        crate::update::preflight_app_writable()?;
                         let bytes = crate::update::download_and_verify(&artifact)?;
                         let _ = tx.send(UpdateEvent::ApplyProgress(
                             "Verifying signature + checksum, installing…".to_string(),

@@ -647,6 +647,59 @@ pub fn current_app_path() -> Result<PathBuf> {
     Ok(exe)
 }
 
+/// User-facing CTA appended to the pre-flight errors below. The releases page is
+/// the manual-download fallback when an in-place update can't run.
+pub const RELEASES_PAGE: &str = "https://github.com/V-SK/alice-wallet/releases/latest";
+
+/// Pre-flight: an in-place update can only succeed if we can REPLACE the running
+/// app at its current on-disk location. Two common real-world blockers make the
+/// swap physically impossible, and both must be caught BEFORE we download an
+/// artifact (so the user gets an actionable message, not a cryptic IO error deep
+/// in the swap):
+///   * macOS **App Translocation** — an app opened directly from a download
+///     (still quarantined, never moved) runs from a randomized READ-ONLY mount
+///     under `…/AppTranslocation/…`; nothing can write there.
+///   * a non-writable parent dir — e.g. `/Applications` for a non-admin user.
+///
+/// Returns a [`UpdateError::Safety`] with a fix the user can actually act on.
+pub fn preflight_app_writable() -> Result<()> {
+    check_location_writable(&current_app_path()?)
+}
+
+/// Core of [`preflight_app_writable`], split out so it can be unit-tested against
+/// arbitrary paths without depending on where the test binary happens to live.
+fn check_location_writable(app: &Path) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        if app.to_string_lossy().contains("/AppTranslocation/") {
+            return Err(UpdateError::Safety(format!(
+                "Alice Wallet is running from a temporary read-only location (macOS App \
+                 Translocation — this happens when an app is opened straight from a download). \
+                 Move Alice Wallet into your Applications folder and reopen it, then update — \
+                 or download the latest version manually: {RELEASES_PAGE}"
+            )));
+        }
+    }
+    // The swap renames within the app's PARENT dir (current -> .lkg, staged ->
+    // current) and writes a `.staged`/health-marker sibling, so the PARENT must
+    // be writable. Probe it with a throwaway file rather than guessing from
+    // metadata (ownership/ACLs/SIP are hard to reason about statically).
+    let parent = app.parent().unwrap_or(app);
+    let probe = parent.join(format!(".alice-update-write-probe-{}", nanos()));
+    match std::fs::write(&probe, b"") {
+        Ok(()) => {
+            let _ = remove_path(&probe);
+            Ok(())
+        }
+        Err(e) => Err(UpdateError::Safety(format!(
+            "Can't auto-update: the folder containing Alice Wallet ({}) isn't writable ({e}). \
+             Move Alice Wallet into your Applications folder (or another writable location) and \
+             reopen it, or download the latest version manually: {RELEASES_PAGE}",
+            parent.display()
+        ))),
+    }
+}
+
 /// Walk up from `exe` to the nearest ancestor directory whose name ends in
 /// `.app`. Returns `None` if the executable is not inside a bundle.
 #[cfg(target_os = "macos")]
@@ -1604,6 +1657,58 @@ mod tests {
         let d3 = register_launch(&app, "1.4.0").unwrap(); // running != marker
         assert_eq!(d3, LaunchDecision::Normal);
         assert!(!has_pending_health_check(&app));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn preflight_passes_writable_blocks_readonly_and_translocated() {
+        let base = std::env::temp_dir().join(format!(
+            "alice-wallet-preflight-{}-{}",
+            std::process::id(),
+            nanos()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+
+        // Writable parent (temp base): the app location passes even though the
+        // app itself doesn't exist yet — we probe the PARENT.
+        let app = base.join("AliceWallet.app");
+        assert!(
+            check_location_writable(&app).is_ok(),
+            "a writable parent dir must pass pre-flight"
+        );
+
+        // macOS App Translocation path is blocked with an actionable Safety error.
+        #[cfg(target_os = "macos")]
+        {
+            let trans = std::path::Path::new(
+                "/private/var/folders/aa/bb/T/AppTranslocation/ABC-123/d/AliceWallet.app",
+            );
+            assert!(
+                matches!(check_location_writable(trans), Err(UpdateError::Safety(_))),
+                "a translocated (read-only) location must be blocked"
+            );
+        }
+
+        // Non-writable parent is blocked — but only assert when the OS actually
+        // enforces the permission for us (skip under root, which bypasses 0o555).
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let ro = base.join("readonly");
+            std::fs::create_dir_all(&ro).unwrap();
+            std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o555)).unwrap();
+            let enforced = std::fs::write(ro.join(".probe"), b"").is_err();
+            if enforced {
+                let app_ro = ro.join("AliceWallet.app");
+                assert!(
+                    matches!(check_location_writable(&app_ro), Err(UpdateError::Safety(_))),
+                    "a non-writable parent dir must be blocked"
+                );
+            }
+            // Restore perms so cleanup can remove the tree.
+            let _ = std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o755));
+        }
 
         let _ = std::fs::remove_dir_all(&base);
     }
