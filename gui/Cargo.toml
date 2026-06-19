@@ -1,6 +1,6 @@
 [package]
 name = "gui"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 
 # Headless CLI wallet. Lives in this crate so it reuses the display-free `gui`
